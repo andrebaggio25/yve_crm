@@ -629,7 +629,15 @@ class LeadController
             return;
         }
 
-        if (empty($lead['phone_normalized'])) {
+        // wa.me: usar exatamente o telefone cadastrado/importado (apenas digitos), nao phone_normalized
+        // (evita DDI duplicado em dados legados onde normalized ainda tinha 55 prefixado).
+        $waDigits = '';
+        if (!empty($lead['phone']) && trim((string) $lead['phone']) !== '') {
+            $waDigits = preg_replace('/\D/', '', (string) $lead['phone']);
+        } elseif (!empty($lead['phone_normalized'])) {
+            $waDigits = preg_replace('/\D/', '', (string) $lead['phone_normalized']);
+        }
+        if ($waDigits === '') {
             $response->jsonError('Lead nao possui telefone cadastrado', 422);
             return;
         }
@@ -662,8 +670,7 @@ class LeadController
                 : null;  // Sem mensagem quando nao ha template
         }
 
-        $phoneForLink = (string) $lead['phone_normalized'];
-        $whatsappLink = PhoneHelper::getWhatsAppLink($phoneForLink, $message);
+        $whatsappLink = PhoneHelper::getWhatsAppLink($waDigits, $message);
 
         $user = Session::user();
 
