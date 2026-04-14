@@ -279,19 +279,24 @@ class Migration
         
         try {
             self::$db->beginTransaction();
-            
+
             if (is_callable($migrationData['up'])) {
                 $migrationData['up'](self::$db);
             } else {
                 self::$db->exec($migrationData['up']);
             }
-            
+
             $stmt = self::$db->prepare("INSERT INTO migrations (migration, batch) VALUES (:migration, :batch)");
             $stmt->execute([':migration' => $migration, ':batch' => $batch]);
-            
-            self::$db->commit();
+
+            // MySQL faz commit implicito em DDL (CREATE TABLE, etc.), encerrando a transacao.
+            if (self::$db->inTransaction()) {
+                self::$db->commit();
+            }
         } catch (\Exception $e) {
-            self::$db->rollBack();
+            if (self::$db->inTransaction()) {
+                self::$db->rollBack();
+            }
             throw $e;
         }
     }
@@ -312,19 +317,23 @@ class Migration
         
         try {
             self::$db->beginTransaction();
-            
+
             if (is_callable($migrationData['down'])) {
                 $migrationData['down'](self::$db);
             } else {
                 self::$db->exec($migrationData['down']);
             }
-            
+
             $stmt = self::$db->prepare("DELETE FROM migrations WHERE migration = :migration");
             $stmt->execute([':migration' => $migration['migration']]);
-            
-            self::$db->commit();
+
+            if (self::$db->inTransaction()) {
+                self::$db->commit();
+            }
         } catch (\Exception $e) {
-            self::$db->rollBack();
+            if (self::$db->inTransaction()) {
+                self::$db->rollBack();
+            }
             throw $e;
         }
     }
