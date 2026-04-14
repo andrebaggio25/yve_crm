@@ -4,27 +4,13 @@ namespace App\Helpers;
 
 class PhoneHelper
 {
+    /**
+     * Apenas digitos, sem inferir pais. O numero deve vir ja com codigo internacional (E.164 sem +).
+     * Nao prefixa 55 — evita duplicar DDI em wa.me e no armazenamento.
+     */
     public static function normalize(string $phone): string
     {
-        $cleaned = preg_replace('/\D/', '', $phone);
-        
-        if (strlen($cleaned) === 11) {
-            return '55' . $cleaned;
-        }
-        
-        if (strlen($cleaned) === 10) {
-            return '55' . $cleaned;
-        }
-        
-        if (strlen($cleaned) === 13 && strpos($cleaned, '55') === 0) {
-            return $cleaned;
-        }
-        
-        if (strlen($cleaned) === 12 && strpos($cleaned, '55') === 0) {
-            return $cleaned;
-        }
-        
-        return $cleaned;
+        return preg_replace('/\D/', '', $phone);
     }
 
     public static function format(string $phone): string
@@ -45,8 +31,9 @@ class PhoneHelper
     public static function isValid(string $phone): bool
     {
         $normalized = self::normalize($phone);
-        
-        return strlen($normalized) >= 12 && strlen($normalized) <= 13;
+        $len = strlen($normalized);
+
+        return $len >= 8 && $len <= 15;
     }
 
     public static function isMobile(string $phone): bool

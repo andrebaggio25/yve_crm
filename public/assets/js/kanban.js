@@ -552,6 +552,7 @@ const Kanban = {
             body.innerHTML = this.buildLeadDetailHtml(lead, events);
             this.initLeadDetailTabs(body);
             this.initLeadDetailFollowUp(body, lead);
+            this.initLeadDetailEditForm(body, lead);
         } catch (error) {
             console.error(error);
             body.innerHTML = '<div class="p-6"><p class="text-sm text-red-600">Erro ao carregar detalhes.</p></div>';
@@ -713,6 +714,146 @@ const Kanban = {
                 if (ta) ta.value = '';
                 await this.refreshLeadDetailEvents(leadId, bodyEl);
             } else App.toast(r.message || 'Erro', 'error');
+        });
+    },
+
+    initLeadDetailEditForm(bodyEl, lead) {
+        const readEl = bodyEl.querySelector('#lead-detail-summary-read');
+        const editEl = bodyEl.querySelector('#lead-detail-summary-edit');
+        const btnEdit = bodyEl.querySelector('#lead-detail-btn-edit');
+        const btnCancelTop = bodyEl.querySelector('#lead-detail-btn-cancel-top');
+        const btnCancel = bodyEl.querySelector('#lead-detail-edit-cancel');
+        const btnSave = bodyEl.querySelector('#lead-detail-edit-save');
+        if (!readEl || !editEl || !btnEdit) return;
+
+        const modal = document.getElementById('lead-detail-modal');
+        const leadId = modal?.dataset?.leadId ? parseInt(modal.dataset.leadId, 10) : lead?.id;
+
+        const fillForm = () => {
+            const nameEl = bodyEl.querySelector('#lead-edit-name');
+            const valEl = bodyEl.querySelector('#lead-edit-value');
+            const phoneEl = bodyEl.querySelector('#lead-edit-phone');
+            const emailEl = bodyEl.querySelector('#lead-edit-email');
+            const sourceEl = bodyEl.querySelector('#lead-edit-source');
+            const prodEl = bodyEl.querySelector('#lead-edit-product');
+            const notesEl = bodyEl.querySelector('#lead-edit-notes-summary');
+            if (nameEl) nameEl.value = lead.name || '';
+            if (valEl) {
+                const v = lead.value;
+                if (v === null || v === undefined || v === '') {
+                    valEl.value = '';
+                } else {
+                    const n = typeof v === 'number' ? v : parseFloat(String(v).replace(/\s/g, '').replace(',', '.'));
+                    valEl.value = Number.isNaN(n) ? '' : String(n).replace('.', ',');
+                }
+            }
+            if (phoneEl) phoneEl.value = lead.phone != null ? String(lead.phone) : '';
+            if (emailEl) emailEl.value = lead.email || '';
+            if (sourceEl) sourceEl.value = lead.source || '';
+            if (prodEl) prodEl.value = lead.product_interest || '';
+            if (notesEl) notesEl.value = lead.notes_summary || '';
+        };
+
+        fillForm();
+
+        const setViewMode = (editing) => {
+            readEl.classList.toggle('hidden', editing);
+            editEl.classList.toggle('hidden', !editing);
+            btnEdit.classList.toggle('hidden', editing);
+            if (btnCancelTop) btnCancelTop.classList.toggle('hidden', !editing);
+        };
+
+        const exitEdit = () => {
+            setViewMode(false);
+            fillForm();
+        };
+
+        btnEdit.addEventListener('click', () => setViewMode(true));
+        btnCancelTop?.addEventListener('click', exitEdit);
+        btnCancel?.addEventListener('click', exitEdit);
+
+        const sel = bodyEl.querySelector('#lead-edit-assigned');
+        if (sel) {
+            API.users
+                .list()
+                .then((res) => {
+                    if (!res.success || !res.data?.users) return;
+                    const users = res.data.users;
+                    const ids = new Set(users.map((u) => String(u.id)));
+                    const parts = ['<option value="">(nao atribuido)</option>'];
+                    if (lead.assigned_user_id != null && !ids.has(String(lead.assigned_user_id))) {
+                        parts.push(
+                            `<option value="${lead.assigned_user_id}">${this.escapeHtml(
+                                lead.assigned_user_name || 'Responsavel atual'
+                            )}</option>`
+                        );
+                    }
+                    users.forEach((u) => {
+                        parts.push(`<option value="${u.id}">${this.escapeHtml(u.name || '')}</option>`);
+                    });
+                    sel.innerHTML = parts.join('');
+                    if (lead.assigned_user_id != null) {
+                        sel.value = String(lead.assigned_user_id);
+                    } else {
+                        sel.value = '';
+                    }
+                })
+                .catch(() => {});
+        }
+
+        btnSave?.addEventListener('click', async () => {
+            const name = bodyEl.querySelector('#lead-edit-name')?.value?.trim() || '';
+            if (name.length < 2) {
+                App.toast('Nome deve ter pelo menos 2 caracteres', 'warning');
+                return;
+            }
+            const rawVal = bodyEl.querySelector('#lead-edit-value')?.value?.trim() || '';
+            const normalizedVal = rawVal.replace(/\s/g, '').replace(',', '.');
+            let valueNum = 0;
+            if (normalizedVal !== '') {
+                valueNum = parseFloat(normalizedVal);
+                if (Number.isNaN(valueNum)) {
+                    App.toast('Valor invalido', 'warning');
+                    return;
+                }
+            }
+            const phone = bodyEl.querySelector('#lead-edit-phone')?.value?.trim() ?? '';
+            const email = bodyEl.querySelector('#lead-edit-email')?.value?.trim() ?? '';
+            const source = bodyEl.querySelector('#lead-edit-source')?.value?.trim() ?? '';
+            const product_interest = bodyEl.querySelector('#lead-edit-product')?.value ?? '';
+            const notes_summary = bodyEl.querySelector('#lead-edit-notes-summary')?.value?.trim() ?? '';
+            const assignedSel = bodyEl.querySelector('#lead-edit-assigned');
+
+            const payload = {
+                name,
+                value: valueNum,
+                phone,
+                email: email,
+                source: source,
+                product_interest: product_interest,
+                notes_summary: notes_summary
+            };
+
+            if (assignedSel && assignedSel.options.length > 0 && assignedSel.value !== '') {
+                payload.assigned_user_id = parseInt(assignedSel.value, 10);
+            }
+
+            btnSave.disabled = true;
+            const prevText = btnSave.textContent;
+            btnSave.textContent = 'Salvando...';
+            try {
+                await API.leads.update(leadId, payload);
+                App.toast('Lead atualizado', 'success');
+                exitEdit();
+                await this.openLeadDetail(leadId);
+                await this.loadData();
+            } catch (err) {
+                const msg = err?.data?.message || err?.message || 'Erro ao salvar';
+                App.toast(msg, 'error');
+            } finally {
+                btnSave.disabled = false;
+                btnSave.textContent = prevText;
+            }
         });
     },
 
@@ -974,17 +1115,64 @@ const Kanban = {
                 .join('');
         };
 
+        const editFormFields = `
+                <div>
+                    <label class="block text-xs font-medium text-slate-700" for="lead-edit-name">Nome</label>
+                    <input type="text" id="lead-edit-name" name="name" maxlength="255" class="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500" autocomplete="name" />
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-700" for="lead-edit-value">Valor</label>
+                    <input type="text" id="lead-edit-value" name="value" inputmode="decimal" class="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500" placeholder="0,00" />
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-700" for="lead-edit-phone">Telefone</label>
+                    <input type="tel" id="lead-edit-phone" name="phone" class="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-sm text-slate-900 shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500" autocomplete="tel" />
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-700" for="lead-edit-email">E-mail</label>
+                    <input type="email" id="lead-edit-email" name="email" class="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500" autocomplete="email" />
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-700" for="lead-edit-source">Origem</label>
+                    <input type="text" id="lead-edit-source" name="source" class="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500" />
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-700" for="lead-edit-product">Produtos / interesse</label>
+                    <textarea id="lead-edit-product" name="product_interest" rows="3" class="mt-1 w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500" placeholder="Ex.: Plano A, Plano B"></textarea>
+                    <p class="mt-1 text-[11px] leading-relaxed text-slate-500">Um produto por linha ou separados por virgula, ponto e virgula, barra vertical ou quebra de linha.</p>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-700" for="lead-edit-notes-summary">Resumo de notas</label>
+                    <textarea id="lead-edit-notes-summary" name="notes_summary" rows="2" class="mt-1 w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500" placeholder="Opcional"></textarea>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-700" for="lead-edit-assigned">Responsavel</label>
+                    <select id="lead-edit-assigned" name="assigned_user_id" class="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"></select>
+                </div>
+                <div class="flex flex-col-reverse gap-2 border-t border-slate-100 pt-4 sm:flex-row sm:justify-end sm:gap-3">
+                    <button type="button" id="lead-detail-edit-cancel" class="inline-flex w-full items-center justify-center rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50 sm:w-auto">Cancelar</button>
+                    <button type="button" id="lead-detail-edit-save" class="inline-flex w-full items-center justify-center rounded-lg bg-primary-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-primary-700 sm:w-auto">Salvar</button>
+                </div>
+        `;
+
         // Aba Resumo - dados do lead + mini timeline de observacoes
         const summarySection = `
             <div data-detail-panel="summary" class="space-y-4 text-slate-900">
-                <div class="flex flex-wrap items-center gap-2">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <div class="flex flex-wrap items-center gap-2">
                     ${statusBadge()}
                     ${
                         lead.temperature
                             ? `<span class="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-900 ring-1 ring-amber-200/80">Temperatura: ${this.escapeHtml(lead.temperature)}</span>`
                             : ''
                     }
+                    </div>
+                    <div class="flex shrink-0 gap-2">
+                        <button type="button" id="lead-detail-btn-cancel-top" class="hidden rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50">Cancelar</button>
+                        <button type="button" id="lead-detail-btn-edit" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-primary-800 shadow-sm ring-1 ring-primary-200/80 transition hover:bg-primary-50">Editar dados</button>
+                    </div>
                 </div>
+                <div id="lead-detail-summary-read">
                 <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm divide-y divide-slate-100">
                     ${detailRows.join('')}
                 </div>
@@ -1008,6 +1196,11 @@ const Kanban = {
                     <div class="space-y-1">
                         ${buildMiniNotesTimeline()}
                     </div>
+                </div>
+                </div>
+                <div id="lead-detail-summary-edit" class="hidden rounded-2xl border border-primary-200 bg-white p-4 shadow-sm ring-1 ring-primary-100 sm:p-5">
+                    <p class="mb-4 text-[11px] font-semibold uppercase tracking-wide text-primary-900">Editar informacoes</p>
+                    <div class="space-y-4">${editFormFields}</div>
                 </div>
             </div>
         `;

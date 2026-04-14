@@ -7,10 +7,42 @@ use App\Core\Response;
 use App\Core\Database;
 use App\Core\Session;
 use App\Core\App;
+use App\Helpers\LeadTagHelper;
 use App\Helpers\PhoneHelper;
 
 class LeadController
 {
+    /**
+     * Lead com joins e tags (mesmo formato de apiShow).
+     */
+    private function leadWithRelationsAndTags(int $id): ?array
+    {
+        $lead = Database::fetch(
+            "SELECT l.*, u.name as assigned_user_name, p.name as pipeline_name,
+                    ps.name as stage_name, ps.stage_type as stage_type, ps.color_token as stage_color
+             FROM leads l
+             LEFT JOIN users u ON l.assigned_user_id = u.id
+             LEFT JOIN pipelines p ON l.pipeline_id = p.id
+             LEFT JOIN pipeline_stages ps ON l.stage_id = ps.id
+             WHERE l.id = :id AND l.deleted_at IS NULL",
+            [':id' => $id]
+        );
+
+        if (!$lead) {
+            return null;
+        }
+
+        $lead['tags'] = Database::fetchAll(
+            "SELECT t.id, t.name, t.color 
+             FROM lead_tags t
+             JOIN lead_tag_items ti ON t.id = ti.tag_id
+             WHERE ti.lead_id = :lead_id",
+            [':lead_id' => $id]
+        );
+
+        return $lead;
+    }
+
     public function apiList(Request $request, Response $response): void
     {
         try {
@@ -84,29 +116,12 @@ class LeadController
         }
 
         try {
-            $lead = Database::fetch(
-                "SELECT l.*, u.name as assigned_user_name, p.name as pipeline_name,
-                        ps.name as stage_name, ps.stage_type as stage_type, ps.color_token as stage_color
-                 FROM leads l
-                 LEFT JOIN users u ON l.assigned_user_id = u.id
-                 LEFT JOIN pipelines p ON l.pipeline_id = p.id
-                 LEFT JOIN pipeline_stages ps ON l.stage_id = ps.id
-                 WHERE l.id = :id AND l.deleted_at IS NULL",
-                [':id' => $id]
-            );
+            $lead = $this->leadWithRelationsAndTags((int) $id);
 
             if (!$lead) {
                 $response->jsonError('Lead nao encontrado', 404);
                 return;
             }
-
-            $lead['tags'] = Database::fetchAll(
-                "SELECT t.id, t.name, t.color 
-                 FROM lead_tags t
-                 JOIN lead_tag_items ti ON t.id = ti.tag_id
-                 WHERE ti.lead_id = :lead_id",
-                [':lead_id' => $id]
-            );
 
             $response->jsonSuccess(['lead' => $lead]);
         } catch (\Exception $e) {
@@ -299,6 +314,11 @@ class LeadController
 
             Database::update('leads', $updateData, 'id = :id', [':id' => $id]);
 
+            if (array_key_exists('product_interest', $updateData)) {
+                $pi = $updateData['product_interest'];
+                LeadTagHelper::syncProductTags((int) $id, $pi !== null ? (string) $pi : '');
+            }
+
             Database::insert('lead_events', [
                 'lead_id' => $id,
                 'user_id' => $user['id'],
@@ -311,7 +331,12 @@ class LeadController
 
             App::log("Lead atualizado: ID {$id}");
 
-            $response->jsonSuccess([], 'Lead atualizado com sucesso');
+            $freshLead = $this->leadWithRelationsAndTags((int) $id);
+
+            $response->jsonSuccess(
+                $freshLead ? ['lead' => $freshLead] : [],
+                'Lead atualizado com sucesso'
+            );
         } catch (\Exception $e) {
             if ($db->inTransaction()) {
                 $db->rollBack();
