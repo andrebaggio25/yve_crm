@@ -463,6 +463,13 @@ const Kanban = {
             if (res.success && res.data?.whatsapp_link) {
                 window.open(res.data.whatsapp_link, '_blank', 'noopener,noreferrer');
                 App.toast(res.message || 'WhatsApp aberto', 'success');
+                // Pipeline pode mover o lead automaticamente (ex.: etapa inicial -> intermediaria)
+                await this.loadData();
+                const modal = document.getElementById('lead-detail-modal');
+                const openId = modal?.dataset?.leadId ? parseInt(modal.dataset.leadId, 10) : null;
+                if (modal && !modal.classList.contains('hidden') && openId === leadId) {
+                    await this.openLeadDetail(leadId);
+                }
                 return res;
             }
             App.toast(res.message || 'Nao foi possivel abrir o WhatsApp', 'error');
@@ -577,6 +584,10 @@ const Kanban = {
                 const show = p.getAttribute('data-detail-panel') === name;
                 p.classList.toggle('hidden', !show);
             });
+            const editBar = bodyEl.querySelector('#lead-detail-edit-bar');
+            if (editBar) {
+                editBar.classList.toggle('hidden', name !== 'summary');
+            }
         };
 
         tabs.forEach((t) => {
@@ -668,7 +679,7 @@ const Kanban = {
             if (tplId > 0) payload.template_id = tplId;
             if (customMsg) payload.message = customMsg;
             await this.runWhatsAppTrigger(leadId, payload);
-            await this.refreshLeadDetailEvents(leadId, bodyEl);
+            // runWhatsAppTrigger ja recarrega o Kanban e o modal quando o detalhe esta aberto
         });
 
         // Carrega timeline de observacoes
@@ -1155,22 +1166,16 @@ const Kanban = {
                 </div>
         `;
 
-        // Aba Resumo - dados do lead + mini timeline de observacoes
+        // Aba Resumo - dados do lead + mini timeline de observacoes (botoes Editar ficam na faixa sticky com as abas)
         const summarySection = `
             <div data-detail-panel="summary" class="space-y-4 text-slate-900">
-                <div class="flex flex-wrap items-center justify-between gap-2">
-                    <div class="flex flex-wrap items-center gap-2">
+                <div class="flex flex-wrap items-center gap-2">
                     ${statusBadge()}
                     ${
                         lead.temperature
                             ? `<span class="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-900 ring-1 ring-amber-200/80">Temperatura: ${this.escapeHtml(lead.temperature)}</span>`
                             : ''
                     }
-                    </div>
-                    <div class="flex shrink-0 gap-2">
-                        <button type="button" id="lead-detail-btn-cancel-top" class="hidden rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50">Cancelar</button>
-                        <button type="button" id="lead-detail-btn-edit" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-primary-800 shadow-sm ring-1 ring-primary-200/80 transition hover:bg-primary-50">Editar dados</button>
-                    </div>
                 </div>
                 <div id="lead-detail-summary-read">
                 <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm divide-y divide-slate-100">
@@ -1229,10 +1234,16 @@ const Kanban = {
 
         return `
             <div class="px-3 pb-4 pt-3 sm:px-4 sm:pb-5">
-                <div class="sticky top-0 z-10 -mx-0.5 mb-3 flex gap-1 rounded-xl bg-slate-200/60 p-1 shadow-inner ring-1 ring-slate-200/80" role="tablist" aria-label="Secoes do lead">
-                    <button type="button" role="tab" data-detail-tab="summary" class="flex-1 rounded-xl px-3 py-2.5 text-sm font-medium transition">Resumo</button>
-                    <button type="button" role="tab" data-detail-tab="actions" class="flex-1 rounded-xl px-3 py-2.5 text-sm font-medium transition">Acoes</button>
-                    <button type="button" role="tab" data-detail-tab="history" class="flex-1 rounded-xl px-3 py-2.5 text-sm font-medium transition">Historico</button>
+                <div class="sticky top-0 z-20 -mx-0.5 mb-3 space-y-2 rounded-xl bg-slate-50/95 p-2 pb-2.5 shadow-sm ring-1 ring-slate-200/80 backdrop-blur-sm">
+                    <div class="flex gap-1 rounded-xl bg-slate-200/60 p-1 shadow-inner ring-1 ring-slate-200/80" role="tablist" aria-label="Secoes do lead">
+                        <button type="button" role="tab" data-detail-tab="summary" class="flex-1 rounded-xl px-3 py-2.5 text-sm font-medium transition">Resumo</button>
+                        <button type="button" role="tab" data-detail-tab="actions" class="flex-1 rounded-xl px-3 py-2.5 text-sm font-medium transition">Acoes</button>
+                        <button type="button" role="tab" data-detail-tab="history" class="flex-1 rounded-xl px-3 py-2.5 text-sm font-medium transition">Historico</button>
+                    </div>
+                    <div id="lead-detail-edit-bar" class="flex flex-wrap items-center justify-end gap-2 px-0.5">
+                        <button type="button" id="lead-detail-btn-cancel-top" class="hidden rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50">Cancelar</button>
+                        <button type="button" id="lead-detail-btn-edit" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-primary-800 shadow-sm ring-1 ring-primary-200/80 transition hover:bg-primary-50">Editar dados</button>
+                    </div>
                 </div>
                 ${summarySection}
                 ${actionsSection}
