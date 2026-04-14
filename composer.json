@@ -1,0 +1,12 @@
+{
+    "name": "yve/crm",
+    "description": "Yve CRM",
+    "require": {
+        "php": ">=8.1",
+        "phpoffice/phpspreadsheet": "^3.3"
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true
+    }
+}

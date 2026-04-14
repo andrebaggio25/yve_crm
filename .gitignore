@@ -1,0 +1,8 @@
+/node_modules/
+/vendor/
+/.env
+/.env.local
+/.env.*.local
+/storage/logs/*.log
+/public/assets/css/app.css.map
+.DS_Store

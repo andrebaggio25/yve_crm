@@ -1,0 +1,243 @@
+/* Tablet e menor */
+@media (max-width: 1024px) {
+    :root {
+        --sidebar-width: var(--sidebar-collapsed);
+    }
+
+    .sidebar .logo-text,
+    .sidebar .nav-item span,
+    .sidebar .nav-section-title,
+    .sidebar .user-info {
+        display: none;
+    }
+
+    .sidebar .logo {
+        justify-content: center;
+    }
+
+    .sidebar .nav-item {
+        justify-content: center;
+        padding: var(--space-3);
+    }
+
+    .sidebar .user-menu {
+        justify-content: center;
+    }
+}
+
+/* Mobile */
+@media (max-width: 768px) {
+    .sidebar {
+        display: none;
+    }
+
+    .main-content {
+        margin-left: 0;
+        margin-bottom: var(--bottom-nav-height);
+    }
+
+    .header {
+        padding: 0 var(--space-4);
+    }
+
+    .header .search-box,
+    .header .tabs {
+        display: none;
+    }
+
+    .sidebar-toggle {
+        display: block;
+    }
+
+    .page-title {
+        font-size: var(--text-lg);
+    }
+
+    .content-area {
+        padding: var(--space-4);
+    }
+
+    .bottom-nav {
+        display: flex;
+    }
+
+    /* Drawer em fullscreen no mobile */
+    .drawer {
+        width: 100%;
+    }
+
+    /* Modais em fullscreen no mobile */
+    .modal {
+        width: 100%;
+        max-width: 100%;
+        max-height: 100%;
+        border-radius: 0;
+    }
+
+    /* Tabelas responsivas */
+    .table-container {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .table th,
+    .table td {
+        white-space: nowrap;
+    }
+
+    /* Formularios em coluna */
+    .form-row {
+        flex-direction: column;
+        gap: 0;
+    }
+
+    /* Cards em coluna */
+    .card-grid {
+        grid-template-columns: 1fr;
+    }
+
+    /* Stats cards */
+    .stats-cards {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    /* Acoes de tabela */
+    .table-actions {
+        flex-direction: column;
+    }
+
+    /* Dropdowns em largura total */
+    .dropdown-menu {
+        position: fixed;
+        top: auto;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        width: 100%;
+        border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+        transform: translateY(100%);
+    }
+
+    .dropdown.active .dropdown-menu {
+        transform: translateY(0);
+    }
+}
+
+/* Mobile pequeno */
+@media (max-width: 480px) {
+    .header {
+        height: 56px;
+    }
+
+    .page-title {
+        font-size: var(--text-base);
+    }
+
+    .content-area {
+        padding: var(--space-3);
+    }
+
+    .stats-cards {
+        grid-template-columns: 1fr;
+    }
+
+    .btn {
+        padding: var(--space-2) var(--space-3);
+        font-size: var(--text-xs);
+    }
+
+    .btn svg {
+        width: 14px;
+        height: 14px;
+    }
+
+    .card-header,
+    .card-body,
+    .card-footer {
+        padding: var(--space-4);
+    }
+
+    .modal-header,
+    .modal-body,
+    .modal-footer {
+        padding: var(--space-4);
+    }
+
+    .toast-container {
+        left: var(--space-4);
+        right: var(--space-4);
+    }
+
+    .toast {
+        min-width: auto;
+        max-width: none;
+    }
+}
+
+/* Orientacao paisagem em mobile */
+@media (max-height: 500px) and (orientation: landscape) {
+    .sidebar {
+        overflow-y: auto;
+    }
+
+    .sidebar-nav {
+        padding-bottom: var(--space-20);
+    }
+
+    .bottom-nav {
+        display: none;
+    }
+
+    .main-content {
+        margin-bottom: 0;
+    }
+}
+
+/* Desktop grande */
+@media (min-width: 1440px) {
+    .content-area {
+        max-width: 1600px;
+        margin: 0 auto;
+    }
+}
+
+/* Utilitarios responsivos */
+@media (max-width: 768px) {
+    .hide-mobile {
+        display: none !important;
+    }
+
+    .show-mobile {
+        display: block !important;
+    }
+
+    .text-center-mobile {
+        text-align: center;
+    }
+}
+
+@media (min-width: 769px) {
+    .hide-desktop {
+        display: none !important;
+    }
+
+    .show-desktop {
+        display: block !important;
+    }
+}
+
+/* Dark mode support (preparacao) */
+@media (prefers-color-scheme: dark) {
+    /* A ser implementado futuramente */
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}

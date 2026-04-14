@@ -1,0 +1,71 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    @apply antialiased;
+  }
+  body {
+    @apply bg-slate-50 text-slate-900 min-h-screen;
+  }
+}
+
+/* Toast / modal helpers used by App.js (dynamic class names) */
+@layer components {
+  .toast-container {
+    @apply fixed bottom-4 right-4 z-[11000] flex flex-col gap-2 max-w-sm pointer-events-none;
+  }
+  .toast {
+    @apply pointer-events-auto flex items-start gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-lg;
+  }
+  .toast-success {
+    @apply border-emerald-200 bg-emerald-50;
+  }
+  .toast-error {
+    @apply border-red-200 bg-red-50;
+  }
+  .toast-warning {
+    @apply border-amber-200 bg-amber-50;
+  }
+  .toast-info {
+    @apply border-sky-200 bg-sky-50;
+  }
+  .loading-overlay .spinner,
+  .spinner {
+    @apply h-10 w-10 rounded-full border-2 border-slate-200 border-t-primary-600 animate-spin;
+  }
+
+  /**
+   * Modal detalhe do lead (Kanban)
+   * Classes arbitrarias tipo z-[9999] / max-h-[min(...)] muitas vezes nao entram no build;
+   * aqui garantimos z-index acima da sidebar (z-200) e largura/altura compatas.
+   */
+  #lead-detail-modal {
+    z-index: 10000;
+    isolation: isolate;
+    overscroll-behavior: contain;
+  }
+
+  #lead-detail-backdrop {
+    z-index: 0;
+  }
+
+  #lead-detail-panel {
+    width: 100%;
+    max-width: 28rem;
+    max-height: min(88dvh, 800px);
+  }
+
+  @media (min-width: 640px) {
+    #lead-detail-panel {
+      max-width: 48rem;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    #lead-detail-panel {
+      max-width: 64rem;
+    }
+  }
+}
