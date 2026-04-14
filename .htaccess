@@ -1,0 +1,6 @@
+# Document root do Hostinger apontando para a pasta do projeto (e nao para /public)?
+# Este arquivo encaminha pedidos para public/, onde estao index.php e o .htaccess do front controller.
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^(.*)$ public/$1 [L]
+</IfModule>

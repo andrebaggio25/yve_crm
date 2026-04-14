@@ -2,6 +2,7 @@
 /vendor/
 /.env
 /.env.local
+/.env.production
 /.env.*.local
 /storage/logs/*.log
 /public/assets/css/app.css.map
