@@ -63,6 +63,33 @@ CREATE DATABASE yve_crm CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 - `ALLOW_MIGRATIONS_WEB=false` (padrao em producao) bloqueia execucao de migrations via API web; use deploy/CLI conforme sua operacao.
 - Nao commite arquivos `.env` com segredos reais.
 
+### Migrations e seeds automaticos (CLI)
+
+Com `.env` configurado na raiz do projeto (no servidor):
+
+```bash
+php scripts/migrate.php
+```
+
+Isso aplica **todas as migrations pendentes** e em seguida **executa todos os seeds** (os seeds do projeto sao idempotentes onde possivel).
+
+Opcoes:
+
+- `php scripts/migrate.php --migrations-only` — so migrations
+- `php scripts/migrate.php --seeds-only` — so seeds
+
+Via Composer (mesmo diretorio do `composer.json`):
+
+```bash
+composer migrate
+composer migrate:db
+composer migrate:seed
+```
+
+**Hostinger:** Advanced → **SSH Access**, entre na pasta do site (onde estao `app/`, `scripts/`, `.env`) e rode `php scripts/migrate.php`. Pode repetir o comando em cada deploy (migrations ja aplicadas sao ignoradas).
+
+**Alternativa (so primeira vez / debug):** definir temporariamente `ALLOW_MIGRATIONS_WEB=true` no `.env`, aceder como admin a `/settings/migrations` e usar os botoes na interface — **volte a `false` depois** por seguranca.
+
 ## Estrutura de Diretorios
 
 ```

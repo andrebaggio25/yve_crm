@@ -5,6 +5,11 @@
         "php": ">=8.0",
         "phpoffice/phpspreadsheet": "~2.1.0"
     },
+    "scripts": {
+        "migrate": "php scripts/migrate.php",
+        "migrate:db": "php scripts/migrate.php --migrations-only",
+        "migrate:seed": "php scripts/migrate.php --seeds-only"
+    },
     "config": {
         "optimize-autoloader": true,
         "sort-packages": true,
