@@ -2,7 +2,7 @@
 
 namespace App\Helpers;
 
-use App\Core\Database;
+use App\Core\TenantAwareDatabase;
 use App\Services\LeadImportService;
 
 class LeadTagHelper
@@ -14,16 +14,16 @@ class LeadTagHelper
             return null;
         }
 
-        $row = Database::fetch(
-            'SELECT id FROM lead_tags WHERE name = :n LIMIT 1',
-            [':n' => $name]
+        $row = TenantAwareDatabase::fetch(
+            'SELECT id FROM lead_tags WHERE name = :n AND tenant_id = :tenant_id LIMIT 1',
+            TenantAwareDatabase::mergeTenantParams([':n' => $name])
         );
 
         if ($row) {
             return (int) $row['id'];
         }
 
-        return Database::insert('lead_tags', [
+        return TenantAwareDatabase::insert('lead_tags', [
             'name' => $name,
             'color' => '#6B7280',
         ]);
@@ -39,14 +39,14 @@ class LeadTagHelper
                 continue;
             }
             $tid = (int) $tid;
-            $exists = Database::fetch(
-                'SELECT 1 FROM lead_tag_items WHERE lead_id = :l AND tag_id = :t LIMIT 1',
-                [':l' => $leadId, ':t' => $tid]
+            $exists = TenantAwareDatabase::fetch(
+                'SELECT 1 FROM lead_tag_items WHERE lead_id = :l AND tag_id = :t AND tenant_id = :tenant_id LIMIT 1',
+                TenantAwareDatabase::mergeTenantParams([':l' => $leadId, ':t' => $tid])
             );
             if ($exists) {
                 continue;
             }
-            Database::insert('lead_tag_items', [
+            TenantAwareDatabase::insert('lead_tag_items', [
                 'lead_id' => $leadId,
                 'tag_id' => $tid,
             ]);

@@ -2,47 +2,56 @@
 
 namespace App\Controllers;
 
+use App\Core\App;
 use App\Core\Request;
 use App\Core\Response;
-use App\Core\Database;
-use App\Core\App;
+use App\Core\TenantAwareDatabase;
+use App\Core\TenantContext;
 
 class PipelineController
 {
     public function index(Request $request, Response $response): void
     {
-        $pipelines = Database::fetchAll(
-            "SELECT p.*, COUNT(l.id) as leads_count 
+        $tid = TenantContext::getEffectiveTenantId();
+
+        $pipelines = TenantAwareDatabase::fetchAll(
+            "SELECT p.*, COUNT(l.id) as leads_count
              FROM pipelines p
-             LEFT JOIN leads l ON p.id = l.pipeline_id AND l.deleted_at IS NULL
+             LEFT JOIN leads l ON p.id = l.pipeline_id AND l.deleted_at IS NULL AND l.tenant_id = :tid1
+             WHERE p.tenant_id = :tid2
              GROUP BY p.id
-             ORDER BY p.created_at DESC"
+             ORDER BY p.created_at DESC",
+            [':tid1' => $tid, ':tid2' => $tid]
         );
 
         $response->view('pipelines.index', [
             'title' => 'Pipelines',
             'pageTitle' => 'Gerenciamento de Pipelines',
-            'pipelines' => $pipelines
+            'pipelines' => $pipelines,
         ]);
     }
 
     public function apiList(Request $request, Response $response): void
     {
         try {
-            $pipelines = Database::fetchAll(
-                "SELECT p.*, COUNT(l.id) as leads_count 
+            $tid = TenantContext::getEffectiveTenantId();
+
+            $pipelines = TenantAwareDatabase::fetchAll(
+                "SELECT p.*, COUNT(l.id) as leads_count
                  FROM pipelines p
-                 LEFT JOIN leads l ON p.id = l.pipeline_id AND l.deleted_at IS NULL
+                 LEFT JOIN leads l ON p.id = l.pipeline_id AND l.deleted_at IS NULL AND l.tenant_id = :tid1
+                 WHERE p.tenant_id = :tid2
                  GROUP BY p.id
-                 ORDER BY p.is_default DESC, p.created_at DESC"
+                 ORDER BY p.is_default DESC, p.created_at DESC",
+                [':tid1' => $tid, ':tid2' => $tid]
             );
 
             foreach ($pipelines as &$pipeline) {
-                $pipeline['stages'] = Database::fetchAll(
-                    "SELECT * FROM pipeline_stages 
-                     WHERE pipeline_id = :pipeline_id 
-                     ORDER BY position",
-                    [':pipeline_id' => $pipeline['id']]
+                $pipeline['stages'] = TenantAwareDatabase::fetchAll(
+                    'SELECT * FROM pipeline_stages
+                     WHERE pipeline_id = :pipeline_id AND tenant_id = :tid
+                     ORDER BY position',
+                    [':pipeline_id' => $pipeline['id'], ':tid' => $tid]
                 );
             }
 
@@ -59,25 +68,27 @@ class PipelineController
 
         if (!$id) {
             $response->jsonError('ID nao fornecido', 400);
+
             return;
         }
 
         try {
-            $pipeline = Database::fetch(
-                "SELECT * FROM pipelines WHERE id = :id",
-                [':id' => $id]
+            $pipeline = TenantAwareDatabase::fetch(
+                'SELECT * FROM pipelines WHERE id = :id AND tenant_id = :tenant_id',
+                TenantAwareDatabase::mergeTenantParams([':id' => $id])
             );
 
             if (!$pipeline) {
                 $response->jsonError('Pipeline nao encontrado', 404);
+
                 return;
             }
 
-            $pipeline['stages'] = Database::fetchAll(
-                "SELECT * FROM pipeline_stages 
-                 WHERE pipeline_id = :pipeline_id 
-                 ORDER BY position",
-                [':pipeline_id' => $id]
+            $pipeline['stages'] = TenantAwareDatabase::fetchAll(
+                'SELECT * FROM pipeline_stages 
+                 WHERE pipeline_id = :pipeline_id AND tenant_id = :tenant_id
+                 ORDER BY position',
+                TenantAwareDatabase::mergeTenantParams([':pipeline_id' => $id])
             );
 
             $response->jsonSuccess(['pipeline' => $pipeline]);
@@ -92,20 +103,21 @@ class PipelineController
         try {
             $data = $request->validate([
                 'name' => 'required|min:3',
-                'description' => ''
+                'description' => '',
             ]);
         } catch (\InvalidArgumentException $e) {
             $errors = json_decode($e->getMessage(), true);
             $response->jsonError('Dados invalidos', 422, $errors);
+
             return;
         }
 
         try {
-            $pipelineId = Database::insert('pipelines', [
+            $pipelineId = TenantAwareDatabase::insert('pipelines', [
                 'name' => $data['name'],
                 'description' => $data['description'] ?? null,
                 'is_active' => 1,
-                'is_default' => 0
+                'is_default' => 0,
             ]);
 
             $defaultStages = [
@@ -118,14 +130,16 @@ class PipelineController
                 ['name' => 'Perdido / Win-back', 'slug' => 'perdido-winback', 'type' => 'lost', 'color' => '#8B5CF6'],
             ];
 
-            $stmt = Database::getInstance()->prepare(
-                "INSERT INTO pipeline_stages 
-                (pipeline_id, name, slug, stage_type, color_token, position, is_default, is_final, win_probability) 
-                VALUES (:pipeline_id, :name, :slug, :type, :color, :position, :is_default, :is_final, :probability)"
+            $tid = TenantContext::getEffectiveTenantId();
+            $stmt = TenantAwareDatabase::getInstance()->prepare(
+                'INSERT INTO pipeline_stages 
+                (tenant_id, pipeline_id, name, slug, stage_type, color_token, position, is_default, is_final, win_probability) 
+                VALUES (:tenant_id, :pipeline_id, :name, :slug, :type, :color, :position, :is_default, :is_final, :probability)'
             );
 
             foreach ($defaultStages as $index => $stage) {
                 $stmt->execute([
+                    ':tenant_id' => $tid,
                     ':pipeline_id' => $pipelineId,
                     ':name' => $stage['name'],
                     ':slug' => $stage['slug'],
@@ -133,8 +147,8 @@ class PipelineController
                     ':color' => $stage['color'],
                     ':position' => $index + 1,
                     ':is_default' => $index === 0 ? 1 : 0,
-                    ':is_final' => in_array($stage['type'], ['won', 'lost']) ? 1 : 0,
-                    ':probability' => match($stage['type']) {
+                    ':is_final' => in_array($stage['type'], ['won', 'lost'], true) ? 1 : 0,
+                    ':probability' => match ($stage['type']) {
                         'initial' => 0,
                         'intermediate' => 20,
                         'hot' => 60,
@@ -142,14 +156,14 @@ class PipelineController
                         'cold' => 10,
                         'won' => 100,
                         'lost' => 0,
-                        default => 0
-                    }
+                        default => 0,
+                    },
                 ]);
             }
 
-            $pipeline = Database::fetch(
-                "SELECT * FROM pipelines WHERE id = :id",
-                [':id' => $pipelineId]
+            $pipeline = TenantAwareDatabase::fetch(
+                'SELECT * FROM pipelines WHERE id = :id AND tenant_id = :tenant_id',
+                TenantAwareDatabase::mergeTenantParams([':id' => $pipelineId])
             );
 
             App::log("Pipeline criado: {$pipeline['name']}");
@@ -167,6 +181,7 @@ class PipelineController
 
         if (!$id) {
             $response->jsonError('ID nao fornecido', 400);
+
             return;
         }
 
@@ -174,16 +189,18 @@ class PipelineController
 
         if (empty($data)) {
             $response->jsonError('Dados nao fornecidos', 400);
+
             return;
         }
 
-        $pipeline = Database::fetch(
-            "SELECT id FROM pipelines WHERE id = :id",
-            [':id' => $id]
+        $pipeline = TenantAwareDatabase::fetch(
+            'SELECT id FROM pipelines WHERE id = :id AND tenant_id = :tenant_id',
+            TenantAwareDatabase::mergeTenantParams([':id' => $id])
         );
 
         if (!$pipeline) {
             $response->jsonError('Pipeline nao encontrado', 404);
+
             return;
         }
 
@@ -203,15 +220,16 @@ class PipelineController
 
         if (empty($updateData)) {
             $response->jsonError('Nenhum dado para atualizar', 400);
+
             return;
         }
 
         try {
-            Database::update('pipelines', $updateData, 'id = :id', [':id' => $id]);
+            TenantAwareDatabase::update('pipelines', $updateData, 'id = :id', [':id' => $id]);
 
-            $pipeline = Database::fetch(
-                "SELECT * FROM pipelines WHERE id = :id",
-                [':id' => $id]
+            $pipeline = TenantAwareDatabase::fetch(
+                'SELECT * FROM pipelines WHERE id = :id AND tenant_id = :tenant_id',
+                TenantAwareDatabase::mergeTenantParams([':id' => $id])
             );
 
             App::log("Pipeline atualizado: {$pipeline['name']}");
@@ -229,37 +247,47 @@ class PipelineController
 
         if (!$id) {
             $response->jsonError('ID nao fornecido', 400);
+
             return;
         }
 
-        $pipeline = Database::fetch(
-            "SELECT id, name, is_default FROM pipelines WHERE id = :id",
-            [':id' => $id]
+        $pipeline = TenantAwareDatabase::fetch(
+            'SELECT id, name, is_default FROM pipelines WHERE id = :id AND tenant_id = :tenant_id',
+            TenantAwareDatabase::mergeTenantParams([':id' => $id])
         );
 
         if (!$pipeline) {
             $response->jsonError('Pipeline nao encontrado', 404);
+
             return;
         }
 
         if ($pipeline['is_default']) {
             $response->jsonError('Nao e possivel excluir o pipeline padrao', 422);
+
             return;
         }
 
-        $hasLeads = Database::fetch(
-            "SELECT COUNT(*) as count FROM leads WHERE pipeline_id = :id AND deleted_at IS NULL",
-            [':id' => $id]
+        $hasLeads = TenantAwareDatabase::fetch(
+            'SELECT COUNT(*) as count FROM leads WHERE pipeline_id = :id AND deleted_at IS NULL AND tenant_id = :tenant_id',
+            TenantAwareDatabase::mergeTenantParams([':id' => $id])
         );
 
-        if ($hasLeads['count'] > 0) {
+        if ((int) ($hasLeads['count'] ?? 0) > 0) {
             $response->jsonError('Nao e possivel excluir um pipeline que possui leads', 422);
+
             return;
         }
 
         try {
-            Database::query("DELETE FROM pipeline_stages WHERE pipeline_id = :id", [':id' => $id]);
-            Database::query("DELETE FROM pipelines WHERE id = :id", [':id' => $id]);
+            TenantAwareDatabase::query(
+                'DELETE FROM pipeline_stages WHERE pipeline_id = :id AND tenant_id = :tenant_id',
+                TenantAwareDatabase::mergeTenantParams([':id' => $id])
+            );
+            TenantAwareDatabase::query(
+                'DELETE FROM pipelines WHERE id = :id AND tenant_id = :tenant_id',
+                TenantAwareDatabase::mergeTenantParams([':id' => $id])
+            );
 
             App::log("Pipeline excluido: {$pipeline['name']}");
 
@@ -276,6 +304,7 @@ class PipelineController
 
         if (!$pipelineId) {
             $response->jsonError('ID nao fornecido', 400);
+
             return;
         }
 
@@ -284,30 +313,33 @@ class PipelineController
 
         if (empty($stages)) {
             $response->jsonError('Etapas nao fornecidas', 400);
+
             return;
         }
 
+        $db = TenantAwareDatabase::getInstance();
+
         try {
-            $db = Database::getInstance();
             $db->beginTransaction();
 
             $stmt = $db->prepare(
-                "UPDATE pipeline_stages 
+                'UPDATE pipeline_stages 
                  SET position = :position, name = :name, color_token = :color, 
                      stage_type = :type, win_probability = :probability
-                 WHERE id = :id AND pipeline_id = :pipeline_id"
+                 WHERE id = :id AND pipeline_id = :pipeline_id AND tenant_id = :tenant_id'
             );
 
+            $paramsBase = TenantAwareDatabase::mergeTenantParams([':pipeline_id' => $pipelineId]);
+
             foreach ($stages as $index => $stage) {
-                $stmt->execute([
+                $stmt->execute(array_merge($paramsBase, [
                     ':id' => $stage['id'],
-                    ':pipeline_id' => $pipelineId,
                     ':position' => $index + 1,
                     ':name' => $stage['name'],
                     ':color' => $stage['color_token'] ?? $stage['color'] ?? '#6B7280',
                     ':type' => $stage['stage_type'] ?? $stage['type'] ?? 'intermediate',
-                    ':probability' => $stage['win_probability'] ?? 0
-                ]);
+                    ':probability' => $stage['win_probability'] ?? 0,
+                ]));
             }
 
             $db->commit();

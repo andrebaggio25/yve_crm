@@ -4,11 +4,13 @@ namespace App\Controllers;
 
 use App\Core\Request;
 use App\Core\Response;
-use App\Core\Database;
 use App\Core\Session;
 use App\Core\App;
+use App\Core\TenantAwareDatabase;
+use App\Core\TenantContext;
 use App\Helpers\LeadTagHelper;
 use App\Helpers\PhoneHelper;
+use App\Services\Automation\AutomationEngine;
 
 class LeadController
 {
@@ -17,27 +19,27 @@ class LeadController
      */
     private function leadWithRelationsAndTags(int $id): ?array
     {
-        $lead = Database::fetch(
+        $lead = TenantAwareDatabase::fetch(
             "SELECT l.*, u.name as assigned_user_name, p.name as pipeline_name,
                     ps.name as stage_name, ps.stage_type as stage_type, ps.color_token as stage_color
              FROM leads l
-             LEFT JOIN users u ON l.assigned_user_id = u.id
-             LEFT JOIN pipelines p ON l.pipeline_id = p.id
-             LEFT JOIN pipeline_stages ps ON l.stage_id = ps.id
-             WHERE l.id = :id AND l.deleted_at IS NULL",
-            [':id' => $id]
+             LEFT JOIN users u ON l.assigned_user_id = u.id AND u.tenant_id = :tenant_id
+             LEFT JOIN pipelines p ON l.pipeline_id = p.id AND p.tenant_id = :tenant_id
+             LEFT JOIN pipeline_stages ps ON l.stage_id = ps.id AND ps.tenant_id = :tenant_id
+             WHERE l.id = :id AND l.deleted_at IS NULL AND l.tenant_id = :tenant_id",
+            TenantAwareDatabase::mergeTenantParams([':id' => $id])
         );
 
         if (!$lead) {
             return null;
         }
 
-        $lead['tags'] = Database::fetchAll(
+        $lead['tags'] = TenantAwareDatabase::fetchAll(
             "SELECT t.id, t.name, t.color 
              FROM lead_tags t
-             JOIN lead_tag_items ti ON t.id = ti.tag_id
-             WHERE ti.lead_id = :lead_id",
-            [':lead_id' => $id]
+             JOIN lead_tag_items ti ON t.id = ti.tag_id AND ti.tenant_id = :tenant_id
+             WHERE ti.lead_id = :lead_id AND t.tenant_id = :tenant_id",
+            TenantAwareDatabase::mergeTenantParams([':lead_id' => $id])
         );
 
         return $lead;
@@ -47,7 +49,7 @@ class LeadController
     {
         try {
             $params = [];
-            $where = ['l.deleted_at IS NULL'];
+            $where = ['l.deleted_at IS NULL', 'l.tenant_id = :tenant_id'];
 
             if ($request->get('pipeline_id')) {
                 $where[] = 'l.pipeline_id = :pipeline_id';
@@ -78,18 +80,20 @@ class LeadController
             $limit = min((int) $request->get('limit', 50), 100);
             $offset = (int) $request->get('offset', 0);
 
-            $leads = Database::fetchAll(
+            $params = TenantAwareDatabase::mergeTenantParams($params);
+
+            $leads = TenantAwareDatabase::fetchAll(
                 "SELECT l.*, u.name as assigned_user_name, ps.name as stage_name, ps.color_token as stage_color
                  FROM leads l
-                 LEFT JOIN users u ON l.assigned_user_id = u.id
-                 LEFT JOIN pipeline_stages ps ON l.stage_id = ps.id
+                 LEFT JOIN users u ON l.assigned_user_id = u.id AND u.tenant_id = :tenant_id
+                 LEFT JOIN pipeline_stages ps ON l.stage_id = ps.id AND ps.tenant_id = :tenant_id
                  WHERE {$whereSql}
                  ORDER BY l.created_at DESC
                  LIMIT {$limit} OFFSET {$offset}",
                 $params
             );
 
-            $count = Database::fetch(
+            $count = TenantAwareDatabase::fetch(
                 "SELECT COUNT(*) as total FROM leads l WHERE {$whereSql}",
                 $params
             );
@@ -159,9 +163,9 @@ class LeadController
                 return;
             }
 
-            $existing = Database::fetch(
-                "SELECT id FROM leads WHERE phone_normalized = :phone AND deleted_at IS NULL LIMIT 1",
-                [':phone' => $phoneNormalized]
+            $existing = TenantAwareDatabase::fetch(
+                'SELECT id FROM leads WHERE phone_normalized = :phone AND deleted_at IS NULL AND tenant_id = :tenant_id LIMIT 1',
+                TenantAwareDatabase::mergeTenantParams([':phone' => $phoneNormalized])
             );
 
             if ($existing) {
@@ -171,9 +175,9 @@ class LeadController
         }
 
         if (empty($data['stage_id'])) {
-            $defaultStage = Database::fetch(
-                "SELECT id FROM pipeline_stages WHERE pipeline_id = :pipeline_id AND is_default = 1 LIMIT 1",
-                [':pipeline_id' => $data['pipeline_id']]
+            $defaultStage = TenantAwareDatabase::fetch(
+                'SELECT id FROM pipeline_stages WHERE pipeline_id = :pipeline_id AND is_default = 1 AND tenant_id = :tenant_id LIMIT 1',
+                TenantAwareDatabase::mergeTenantParams([':pipeline_id' => $data['pipeline_id']])
             );
             $data['stage_id'] = $defaultStage ? $defaultStage['id'] : null;
         }
@@ -181,7 +185,7 @@ class LeadController
         $user = Session::user();
 
         try {
-            $db = Database::getInstance();
+            $db = TenantAwareDatabase::getInstance();
             $db->beginTransaction();
 
             $leadData = [
@@ -201,9 +205,9 @@ class LeadController
                 'temperature' => 'cold'
             ];
 
-            $leadId = Database::insert('leads', $leadData);
+            $leadId = TenantAwareDatabase::insert('leads', $leadData);
 
-            Database::insert('lead_events', [
+            TenantAwareDatabase::insert('lead_events', [
                 'lead_id' => $leadId,
                 'user_id' => $user['id'],
                 'event_type' => 'created',
@@ -213,15 +217,25 @@ class LeadController
 
             $db->commit();
 
-            $lead = Database::fetch(
+            $lead = TenantAwareDatabase::fetch(
                 "SELECT l.*, u.name as assigned_user_name 
                  FROM leads l
-                 LEFT JOIN users u ON l.assigned_user_id = u.id
-                 WHERE l.id = :id",
-                [':id' => $leadId]
+                 LEFT JOIN users u ON l.assigned_user_id = u.id AND u.tenant_id = :tenant_id
+                 WHERE l.id = :id AND l.tenant_id = :tenant_id",
+                TenantAwareDatabase::mergeTenantParams([':id' => $leadId])
             );
 
             App::log("Lead criado: {$lead['name']} (ID: {$leadId})");
+
+            try {
+                AutomationEngine::dispatch(TenantContext::getEffectiveTenantId(), 'lead_created', [
+                    'lead_id' => (int) $leadId,
+                    'pipeline_id' => (int) $data['pipeline_id'],
+                    'stage_id' => (int) ($data['stage_id'] ?? 0),
+                ]);
+            } catch (\Throwable $e) {
+                // ignorar se tabelas de automacao ainda nao existirem
+            }
 
             $response->jsonSuccess(['lead' => $lead], 'Lead criado com sucesso');
         } catch (\Exception $e) {
@@ -249,9 +263,9 @@ class LeadController
             return;
         }
 
-        $lead = Database::fetch(
-            "SELECT * FROM leads WHERE id = :id AND deleted_at IS NULL",
-            [':id' => $id]
+        $lead = TenantAwareDatabase::fetch(
+            'SELECT * FROM leads WHERE id = :id AND deleted_at IS NULL AND tenant_id = :tenant_id',
+            TenantAwareDatabase::mergeTenantParams([':id' => $id])
         );
 
         if (!$lead) {
@@ -274,9 +288,9 @@ class LeadController
             $phoneNormalized = $data['phone'] ? PhoneHelper::normalize($data['phone']) : null;
 
             if ($phoneNormalized && $phoneNormalized !== $lead['phone_normalized']) {
-                $existing = Database::fetch(
-                    "SELECT id FROM leads WHERE phone_normalized = :phone AND id != :id AND deleted_at IS NULL LIMIT 1",
-                    [':phone' => $phoneNormalized, ':id' => $id]
+                $existing = TenantAwareDatabase::fetch(
+                    'SELECT id FROM leads WHERE phone_normalized = :phone AND id != :id AND deleted_at IS NULL AND tenant_id = :tenant_id LIMIT 1',
+                    TenantAwareDatabase::mergeTenantParams([':phone' => $phoneNormalized, ':id' => $id])
                 );
 
                 if ($existing) {
@@ -309,17 +323,17 @@ class LeadController
         $user = Session::user();
 
         try {
-            $db = Database::getInstance();
+            $db = TenantAwareDatabase::getInstance();
             $db->beginTransaction();
 
-            Database::update('leads', $updateData, 'id = :id', [':id' => $id]);
+            TenantAwareDatabase::update('leads', $updateData, 'id = :id', [':id' => $id]);
 
             if (array_key_exists('product_interest', $updateData)) {
                 $pi = $updateData['product_interest'];
                 LeadTagHelper::syncProductTags((int) $id, $pi !== null ? (string) $pi : '');
             }
 
-            Database::insert('lead_events', [
+            TenantAwareDatabase::insert('lead_events', [
                 'lead_id' => $id,
                 'user_id' => $user['id'],
                 'event_type' => 'updated',
@@ -355,9 +369,9 @@ class LeadController
             return;
         }
 
-        $lead = Database::fetch(
-            "SELECT id, name FROM leads WHERE id = :id AND deleted_at IS NULL",
-            [':id' => $id]
+        $lead = TenantAwareDatabase::fetch(
+            'SELECT id, name FROM leads WHERE id = :id AND deleted_at IS NULL AND tenant_id = :tenant_id',
+            TenantAwareDatabase::mergeTenantParams([':id' => $id])
         );
 
         if (!$lead) {
@@ -368,12 +382,12 @@ class LeadController
         $user = Session::user();
 
         try {
-            $db = Database::getInstance();
+            $db = TenantAwareDatabase::getInstance();
             $db->beginTransaction();
 
-            Database::update('leads', ['deleted_at' => date('Y-m-d H:i:s')], 'id = :id', [':id' => $id]);
+            TenantAwareDatabase::update('leads', ['deleted_at' => date('Y-m-d H:i:s')], 'id = :id', [':id' => $id]);
 
-            Database::insert('lead_events', [
+            TenantAwareDatabase::insert('lead_events', [
                 'lead_id' => $id,
                 'user_id' => $user['id'],
                 'event_type' => 'deleted',
@@ -411,12 +425,12 @@ class LeadController
             return;
         }
 
-        $lead = Database::fetch(
+        $lead = TenantAwareDatabase::fetch(
             "SELECT l.*, ps.name as current_stage_name 
              FROM leads l
-             LEFT JOIN pipeline_stages ps ON l.stage_id = ps.id
-             WHERE l.id = :id AND l.deleted_at IS NULL",
-            [':id' => $id]
+             LEFT JOIN pipeline_stages ps ON l.stage_id = ps.id AND ps.tenant_id = :tenant_id
+             WHERE l.id = :id AND l.deleted_at IS NULL AND l.tenant_id = :tenant_id",
+            TenantAwareDatabase::mergeTenantParams([':id' => $id])
         );
 
         if (!$lead) {
@@ -424,9 +438,9 @@ class LeadController
             return;
         }
 
-        $newStage = Database::fetch(
-            "SELECT * FROM pipeline_stages WHERE id = :id",
-            [':id' => $stageId]
+        $newStage = TenantAwareDatabase::fetch(
+            'SELECT * FROM pipeline_stages WHERE id = :id AND tenant_id = :tenant_id',
+            TenantAwareDatabase::mergeTenantParams([':id' => $stageId])
         );
 
         if (!$newStage) {
@@ -452,12 +466,12 @@ class LeadController
         $user = Session::user();
 
         try {
-            $db = Database::getInstance();
+            $db = TenantAwareDatabase::getInstance();
             $db->beginTransaction();
 
-            Database::update('leads', $updateData, 'id = :id', [':id' => $id]);
+            TenantAwareDatabase::update('leads', $updateData, 'id = :id', [':id' => $id]);
 
-            Database::insert('lead_events', [
+            TenantAwareDatabase::insert('lead_events', [
                 'lead_id' => $id,
                 'user_id' => $user['id'],
                 'event_type' => 'stage_changed',
@@ -473,6 +487,16 @@ class LeadController
             $db->commit();
 
             App::log("Lead {$id} movido para etapa {$newStage['name']}");
+
+            try {
+                AutomationEngine::dispatch(TenantContext::getEffectiveTenantId(), 'lead_stage_changed', [
+                    'lead_id' => (int) $id,
+                    'pipeline_id' => (int) $lead['pipeline_id'],
+                    'from_stage_id' => (int) ($lead['stage_id'] ?? 0),
+                    'to_stage_id' => (int) $stageId,
+                ]);
+            } catch (\Throwable $e) {
+            }
 
             $response->jsonSuccess([], 'Lead movido com sucesso');
         } catch (\Exception $e) {
@@ -501,9 +525,9 @@ class LeadController
             return;
         }
 
-        $lead = Database::fetch(
-            "SELECT id FROM leads WHERE id = :id AND deleted_at IS NULL",
-            [':id' => $id]
+        $lead = TenantAwareDatabase::fetch(
+            'SELECT id FROM leads WHERE id = :id AND deleted_at IS NULL AND tenant_id = :tenant_id',
+            TenantAwareDatabase::mergeTenantParams([':id' => $id])
         );
 
         if (!$lead) {
@@ -514,7 +538,7 @@ class LeadController
         $user = Session::user();
 
         try {
-            Database::insert('lead_events', [
+            TenantAwareDatabase::insert('lead_events', [
                 'lead_id' => $id,
                 'user_id' => $user['id'],
                 'event_type' => 'note_added',
@@ -541,14 +565,14 @@ class LeadController
         }
 
         try {
-            $events = Database::fetchAll(
+            $events = TenantAwareDatabase::fetchAll(
                 "SELECT e.*, u.name as user_name
                  FROM lead_events e
-                 LEFT JOIN users u ON e.user_id = u.id
-                 WHERE e.lead_id = :lead_id
+                 LEFT JOIN users u ON e.user_id = u.id AND u.tenant_id = :tenant_id
+                 WHERE e.lead_id = :lead_id AND e.tenant_id = :tenant_id
                  ORDER BY e.created_at ASC
                  LIMIT 500",
-                [':lead_id' => $id]
+                TenantAwareDatabase::mergeTenantParams([':lead_id' => $id])
             );
 
             $stageIds = [];
@@ -571,9 +595,10 @@ class LeadController
             $stageMap = [];
             if ($stageIds !== []) {
                 $placeholders = implode(',', array_fill(0, count($stageIds), '?'));
-                $rows = Database::fetchAll(
-                    "SELECT id, name, stage_type FROM pipeline_stages WHERE id IN ({$placeholders})",
-                    $stageIds
+                $tid = TenantContext::getEffectiveTenantId();
+                $rows = TenantAwareDatabase::fetchAll(
+                    "SELECT id, name, stage_type FROM pipeline_stages WHERE tenant_id = ? AND id IN ({$placeholders})",
+                    array_merge([$tid], array_values($stageIds))
                 );
                 foreach ($rows as $r) {
                     $stageMap[(int) $r['id']] = $r;
@@ -616,12 +641,12 @@ class LeadController
             return;
         }
 
-        $lead = Database::fetch(
+        $lead = TenantAwareDatabase::fetch(
             "SELECT l.*, ps.stage_type, ps.name as stage_name 
              FROM leads l
-             LEFT JOIN pipeline_stages ps ON l.stage_id = ps.id
-             WHERE l.id = :id AND l.deleted_at IS NULL",
-            [':id' => $id]
+             LEFT JOIN pipeline_stages ps ON l.stage_id = ps.id AND ps.tenant_id = :tenant_id
+             WHERE l.id = :id AND l.deleted_at IS NULL AND l.tenant_id = :tenant_id",
+            TenantAwareDatabase::mergeTenantParams([':id' => $id])
         );
 
         if (!$lead) {
@@ -648,10 +673,10 @@ class LeadController
 
         $template = null;
         if ($requestedTemplateId > 0) {
-            $template = Database::fetch(
+            $template = TenantAwareDatabase::fetch(
                 "SELECT id, name, content FROM message_templates 
-                 WHERE id = :id AND channel = 'whatsapp' AND is_active = 1",
-                [':id' => $requestedTemplateId]
+                 WHERE id = :id AND channel = 'whatsapp' AND is_active = 1 AND tenant_id = :tenant_id",
+                TenantAwareDatabase::mergeTenantParams([':id' => $requestedTemplateId])
             );
         }
 
@@ -676,10 +701,10 @@ class LeadController
 
         $db = null;
         try {
-            $db = Database::getInstance();
+            $db = TenantAwareDatabase::getInstance();
             $db->beginTransaction();
 
-            Database::update(
+            TenantAwareDatabase::update(
                 'leads',
                 ['last_contact_at' => date('Y-m-d H:i:s')],
                 'id = :id',
@@ -688,7 +713,7 @@ class LeadController
 
             $preview = $message ? (mb_strlen($message) > 220 ? mb_substr($message, 0, 220) . '…' : $message) : null;
 
-            Database::insert('lead_events', [
+            TenantAwareDatabase::insert('lead_events', [
                 'lead_id' => $id,
                 'user_id' => $user['id'],
                 'event_type' => 'whatsapp_trigger',
@@ -703,22 +728,22 @@ class LeadController
             ]);
 
             if ($lead['stage_type'] === 'initial') {
-                $nextStage = Database::fetch(
+                $nextStage = TenantAwareDatabase::fetch(
                     "SELECT id FROM pipeline_stages 
-                     WHERE pipeline_id = :pipeline_id AND stage_type = 'intermediate'
+                     WHERE pipeline_id = :pipeline_id AND stage_type = 'intermediate' AND tenant_id = :tenant_id
                      ORDER BY position LIMIT 1",
-                    [':pipeline_id' => $lead['pipeline_id']]
+                    TenantAwareDatabase::mergeTenantParams([':pipeline_id' => $lead['pipeline_id']])
                 );
 
                 if ($nextStage) {
-                    Database::update(
+                    TenantAwareDatabase::update(
                         'leads',
                         ['stage_id' => $nextStage['id']],
                         'id = :id',
                         [':id' => $id]
                     );
 
-                    Database::insert('lead_events', [
+                    TenantAwareDatabase::insert('lead_events', [
                         'lead_id' => $id,
                         'user_id' => $user['id'],
                         'event_type' => 'stage_changed',
@@ -767,9 +792,9 @@ class LeadController
             return;
         }
 
-        $lead = Database::fetch(
-            "SELECT id FROM leads WHERE id = :id AND deleted_at IS NULL",
-            [':id' => $id]
+        $lead = TenantAwareDatabase::fetch(
+            'SELECT id FROM leads WHERE id = :id AND deleted_at IS NULL AND tenant_id = :tenant_id',
+            TenantAwareDatabase::mergeTenantParams([':id' => $id])
         );
         if (!$lead) {
             $response->jsonError('Lead nao encontrado', 404);
@@ -797,7 +822,7 @@ class LeadController
         $user = Session::user();
 
         try {
-            Database::insert('lead_events', [
+            TenantAwareDatabase::insert('lead_events', [
                 'lead_id' => $id,
                 'user_id' => $user['id'],
                 'event_type' => $eventType,
@@ -835,18 +860,19 @@ class LeadController
     {
         // 1. Tentar pipeline_id + stage_id exatos (melhor match)
         if ($pipelineId && $stageId) {
-            $row = Database::fetch(
+            $row = TenantAwareDatabase::fetch(
                 "SELECT id, name, content, position FROM message_templates 
                  WHERE channel = 'whatsapp' 
                    AND is_active = 1 
                    AND pipeline_id = :pipeline_id 
                    AND stage_id = :stage_id
+                   AND tenant_id = :tenant_id
                  ORDER BY position ASC, id ASC 
                  LIMIT 1",
-                [
+                TenantAwareDatabase::mergeTenantParams([
                     ':pipeline_id' => $pipelineId,
-                    ':stage_id' => $stageId
-                ]
+                    ':stage_id' => $stageId,
+                ])
             );
             if ($row) {
                 return $row;
@@ -856,19 +882,20 @@ class LeadController
         // 2. Tentar pipeline_id + stage_type (stage_id IS NULL)
         if ($pipelineId) {
             foreach ([$stageType, 'any'] as $st) {
-                $row = Database::fetch(
+                $row = TenantAwareDatabase::fetch(
                     "SELECT id, name, content, position FROM message_templates 
                      WHERE channel = 'whatsapp' 
                        AND is_active = 1 
                        AND pipeline_id = :pipeline_id 
                        AND stage_id IS NULL
                        AND stage_type = :st
+                       AND tenant_id = :tenant_id
                      ORDER BY position ASC, id ASC 
                      LIMIT 1",
-                    [
+                    TenantAwareDatabase::mergeTenantParams([
                         ':pipeline_id' => $pipelineId,
-                        ':st' => $st
-                    ]
+                        ':st' => $st,
+                    ])
                 );
                 if ($row) {
                     return $row;
@@ -878,15 +905,16 @@ class LeadController
         
         // 3. Templates globais (pipeline_id IS NULL)
         foreach ([$stageType, 'any'] as $st) {
-            $row = Database::fetch(
+            $row = TenantAwareDatabase::fetch(
                 "SELECT id, name, content, position FROM message_templates 
                  WHERE channel = 'whatsapp' 
                    AND is_active = 1 
                    AND pipeline_id IS NULL 
                    AND stage_type = :st
+                   AND tenant_id = :tenant_id
                  ORDER BY position ASC, id ASC 
                  LIMIT 1",
-                [':st' => $st]
+                TenantAwareDatabase::mergeTenantParams([':st' => $st])
             );
             if ($row) {
                 return $row;
@@ -910,12 +938,12 @@ class LeadController
         }
         
         try {
-            $lead = Database::fetch(
+            $lead = TenantAwareDatabase::fetch(
                 "SELECT l.*, ps.stage_type, ps.name as stage_name 
                  FROM leads l
-                 LEFT JOIN pipeline_stages ps ON l.stage_id = ps.id
-                 WHERE l.id = :id AND l.deleted_at IS NULL",
-                [':id' => $id]
+                 LEFT JOIN pipeline_stages ps ON l.stage_id = ps.id AND ps.tenant_id = :tenant_id
+                 WHERE l.id = :id AND l.deleted_at IS NULL AND l.tenant_id = :tenant_id",
+                TenantAwareDatabase::mergeTenantParams([':id' => $id])
             );
             
             if (!$lead) {
@@ -957,17 +985,18 @@ class LeadController
         
         // 1. Templates especificos: pipeline_id + stage_id
         if ($pipelineId && $stageId) {
-            $rows = Database::fetchAll(
+            $rows = TenantAwareDatabase::fetchAll(
                 "SELECT id, name, content, position FROM message_templates 
                  WHERE channel = 'whatsapp' 
                    AND is_active = 1 
                    AND pipeline_id = :pipeline_id 
                    AND stage_id = :stage_id
+                   AND tenant_id = :tenant_id
                  ORDER BY position ASC, id ASC",
-                [
+                TenantAwareDatabase::mergeTenantParams([
                     ':pipeline_id' => $pipelineId,
-                    ':stage_id' => $stageId
-                ]
+                    ':stage_id' => $stageId,
+                ])
             );
             if (!empty($rows)) {
                 return $rows;
@@ -976,18 +1005,19 @@ class LeadController
         
         // 2. Templates de pipeline: pipeline_id + stage_type
         if ($pipelineId) {
-            $rows = Database::fetchAll(
+            $rows = TenantAwareDatabase::fetchAll(
                 "SELECT id, name, content, position FROM message_templates 
                  WHERE channel = 'whatsapp' 
                    AND is_active = 1 
                    AND pipeline_id = :pipeline_id 
                    AND stage_id IS NULL
                    AND stage_type IN (:stage_type, 'any')
+                   AND tenant_id = :tenant_id
                  ORDER BY position ASC, id ASC",
-                [
+                TenantAwareDatabase::mergeTenantParams([
                     ':pipeline_id' => $pipelineId,
-                    ':stage_type' => $stageType
-                ]
+                    ':stage_type' => $stageType,
+                ])
             );
             if (!empty($rows)) {
                 return $rows;
@@ -995,14 +1025,15 @@ class LeadController
         }
         
         // 3. Templates globais
-        $rows = Database::fetchAll(
+        $rows = TenantAwareDatabase::fetchAll(
             "SELECT id, name, content, position FROM message_templates 
              WHERE channel = 'whatsapp' 
                AND is_active = 1 
                AND pipeline_id IS NULL 
                AND stage_type IN (:stage_type, 'any')
+               AND tenant_id = :tenant_id
              ORDER BY position ASC, id ASC",
-            [':stage_type' => $stageType]
+            TenantAwareDatabase::mergeTenantParams([':stage_type' => $stageType])
         );
         
         return $rows ?: [];

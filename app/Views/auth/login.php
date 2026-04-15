@@ -72,7 +72,10 @@
                 </button>
             </form>
 
-            <p class="mt-8 text-center text-xs text-slate-400">Versao 1.0.0</p>
+            <p class="mt-6 text-center text-sm text-slate-600">
+                <a href="/register" class="font-medium text-primary-600 hover:underline">Criar nova conta</a>
+            </p>
+            <p class="mt-4 text-center text-xs text-slate-400">Versao 1.0.0</p>
         </div>
     </div>
 </body>

@@ -9,14 +9,14 @@ return [
             return ['message' => 'Usuario admin ja existe', 'skipped' => true];
         }
         
-        $stmt = $db->prepare("INSERT INTO users (name, email, password_hash, role, status) 
-                             VALUES (:name, :email, :password, :role, :status)");
-        
+        $stmt = $db->prepare("INSERT INTO users (tenant_id, name, email, password_hash, role, status) 
+                             VALUES (1, :name, :email, :password, :role, :status)");
+
         $stmt->execute([
-            ':name' => 'Administrador',
+            ':name' => 'Super Administrador',
             ':email' => 'admin@yve.crm',
             ':password' => password_hash('admin123', PASSWORD_BCRYPT),
-            ':role' => 'admin',
+            ':role' => 'superadmin',
             ':status' => 'active'
         ]);
         

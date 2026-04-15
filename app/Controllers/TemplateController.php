@@ -2,36 +2,38 @@
 
 namespace App\Controllers;
 
+use App\Core\App;
 use App\Core\Request;
 use App\Core\Response;
-use App\Core\Database;
-use App\Core\App;
+use App\Core\TenantAwareDatabase;
 
 class TemplateController
 {
     public function index(Request $request, Response $response): void
     {
+        $tp = TenantAwareDatabase::mergeTenantParams();
+
         try {
-            // Tenta fazer JOIN com as novas colunas (migration 013)
-            $templates = Database::fetchAll(
+            $templates = TenantAwareDatabase::fetchAll(
                 "SELECT mt.*, 
                         p.name as pipeline_name, 
                         ps.name as stage_name 
                  FROM message_templates mt 
-                 LEFT JOIN pipelines p ON mt.pipeline_id = p.id 
-                 LEFT JOIN pipeline_stages ps ON mt.stage_id = ps.id 
-                 ORDER BY mt.pipeline_id IS NULL, mt.position, mt.name"
+                 LEFT JOIN pipelines p ON mt.pipeline_id = p.id AND p.tenant_id = :tenant_id
+                 LEFT JOIN pipeline_stages ps ON mt.stage_id = ps.id AND ps.tenant_id = :tenant_id
+                 WHERE mt.tenant_id = :tenant_id
+                 ORDER BY mt.pipeline_id IS NULL, mt.position, mt.name",
+                $tp
             );
         } catch (\Exception $e) {
-            // Se falhar (migration 013 nao executada), faz query simples
-            $templates = Database::fetchAll(
-                "SELECT * FROM message_templates ORDER BY stage_type, name"
+            $templates = TenantAwareDatabase::fetchAll(
+                'SELECT * FROM message_templates WHERE tenant_id = :tenant_id ORDER BY stage_type, name',
+                $tp
             );
-            // Adiciona campos vazios para compatibilidade com a view
             foreach ($templates as &$t) {
                 $t['pipeline_name'] = null;
                 $t['stage_name'] = null;
-                $t['position'] = 1;
+                $t['position'] = $t['position'] ?? 1;
             }
             unset($t);
         }
@@ -39,7 +41,7 @@ class TemplateController
         $response->view('templates.index', [
             'title' => 'Templates',
             'pageTitle' => 'Templates de Mensagem',
-            'templates' => $templates
+            'templates' => $templates,
         ]);
     }
 
@@ -48,36 +50,54 @@ class TemplateController
         try {
             $pipelineId = $request->get('pipeline_id');
             $stageId = $request->get('stage_id');
-            
-            $sql = "SELECT mt.*, 
-                           p.name as pipeline_name, 
-                           ps.name as stage_name 
-                    FROM message_templates mt 
-                    LEFT JOIN pipelines p ON mt.pipeline_id = p.id 
-                    LEFT JOIN pipeline_stages ps ON mt.stage_id = ps.id 
-                    WHERE 1=1";
+
+            // Query simplificada sem JOINs para evitar erros de coluna inexistente
+            $sql = "SELECT * FROM message_templates WHERE tenant_id = :tenant_id";
             $params = [];
-            
-            // Filtro por pipeline especifico
+
             if ($pipelineId) {
-                $sql .= " AND (mt.pipeline_id = :pipeline_id OR mt.pipeline_id IS NULL)";
+                $sql .= ' AND (pipeline_id = :pipeline_id OR pipeline_id IS NULL)';
                 $params[':pipeline_id'] = $pipelineId;
             }
-            
-            // Filtro por etapa especifica
+
             if ($stageId) {
-                $sql .= " AND (mt.stage_id = :stage_id OR mt.stage_id IS NULL)";
+                $sql .= ' AND (stage_id = :stage_id OR stage_id IS NULL)';
                 $params[':stage_id'] = $stageId;
             }
-            
-            $sql .= " ORDER BY mt.pipeline_id IS NULL, mt.position, mt.name";
-            
-            $templates = Database::fetchAll($sql, $params);
+
+            $sql .= ' ORDER BY position, name';
+
+            $templates = TenantAwareDatabase::fetchAll($sql, TenantAwareDatabase::mergeTenantParams($params));
+
+            // Adicionar pipeline_name e stage_name manualmente
+            foreach ($templates as &$template) {
+                $template['pipeline_name'] = null;
+                $template['stage_name'] = null;
+                if ($template['pipeline_id']) {
+                    $pipeline = TenantAwareDatabase::fetch(
+                        'SELECT name FROM pipelines WHERE id = :id AND tenant_id = :tenant_id',
+                        TenantAwareDatabase::mergeTenantParams([':id' => $template['pipeline_id']])
+                    );
+                    if ($pipeline) {
+                        $template['pipeline_name'] = $pipeline['name'];
+                    }
+                }
+                if ($template['stage_id']) {
+                    $stage = TenantAwareDatabase::fetch(
+                        'SELECT name FROM pipeline_stages WHERE id = :id AND tenant_id = :tenant_id',
+                        TenantAwareDatabase::mergeTenantParams([':id' => $template['stage_id']])
+                    );
+                    if ($stage) {
+                        $template['stage_name'] = $stage['name'];
+                    }
+                }
+            }
+            unset($template);
 
             $response->jsonSuccess(['templates' => $templates]);
         } catch (\Exception $e) {
-            App::logError('Erro ao listar templates', $e);
-            $response->jsonError('Erro ao carregar templates', 500);
+            App::logError('Erro ao listar templates: ' . $e->getMessage(), $e);
+            $response->jsonError('Erro ao carregar templates: ' . $e->getMessage(), 500);
         }
     }
 
@@ -87,23 +107,23 @@ class TemplateController
 
         if (empty($data['name']) || empty($data['content'])) {
             $response->jsonError('Nome e conteudo sao obrigatorios', 422);
+
             return;
         }
 
         $slug = $this->slugify($data['name']);
 
-        // Converter pipeline_id e stage_id: se vazio ou 0, guardar como NULL
         $pipelineId = !empty($data['pipeline_id']) ? (int) $data['pipeline_id'] : null;
         $stageId = !empty($data['stage_id']) ? (int) $data['stage_id'] : null;
-        
-        // Se stage_id e informado, pipeline_id e obrigatorio
+
         if ($stageId && !$pipelineId) {
             $response->jsonError('Pipeline e obrigatorio quando uma etapa e especificada', 422);
+
             return;
         }
 
         try {
-            $id = Database::insert('message_templates', [
+            $id = TenantAwareDatabase::insert('message_templates', [
                 'name' => $data['name'],
                 'slug' => $slug,
                 'channel' => $data['channel'] ?? 'whatsapp',
@@ -113,16 +133,16 @@ class TemplateController
                 'position' => isset($data['position']) ? (int) $data['position'] : 1,
                 'content' => $data['content'],
                 'variables' => json_encode($data['variables'] ?? ['nome', 'produto']),
-                'is_active' => ($data['is_active'] ?? true) ? 1 : 0
+                'is_active' => ($data['is_active'] ?? true) ? 1 : 0,
             ]);
 
-            $template = Database::fetch(
+            $template = TenantAwareDatabase::fetch(
                 "SELECT mt.*, p.name as pipeline_name, ps.name as stage_name 
                  FROM message_templates mt 
-                 LEFT JOIN pipelines p ON mt.pipeline_id = p.id 
-                 LEFT JOIN pipeline_stages ps ON mt.stage_id = ps.id 
-                 WHERE mt.id = :id", 
-                [':id' => $id]
+                 LEFT JOIN pipelines p ON mt.pipeline_id = p.id AND p.tenant_id = :tenant_id
+                 LEFT JOIN pipeline_stages ps ON mt.stage_id = ps.id AND ps.tenant_id = :tenant_id
+                 WHERE mt.id = :id AND mt.tenant_id = :tenant_id",
+                TenantAwareDatabase::mergeTenantParams([':id' => $id])
             );
 
             $response->jsonSuccess(['template' => $template], 'Template criado com sucesso');
@@ -139,6 +159,7 @@ class TemplateController
 
         if (!$id) {
             $response->jsonError('ID nao fornecido', 400);
+
             return;
         }
 
@@ -149,8 +170,7 @@ class TemplateController
                 $updateData[$field] = $data[$field];
             }
         }
-        
-        // Tratar campos especiais
+
         if (isset($data['pipeline_id'])) {
             $updateData['pipeline_id'] = !empty($data['pipeline_id']) ? (int) $data['pipeline_id'] : null;
         }
@@ -163,28 +183,29 @@ class TemplateController
         if (isset($data['is_active'])) {
             $updateData['is_active'] = $data['is_active'] ? 1 : 0;
         }
-        
-        // Validacao: se stage_id informado, pipeline_id deve existir
-        if (!empty($updateData['stage_id']) && empty($updateData['pipeline_id'])) {
+
+        if (!empty($updateData['stage_id']) && empty($updateData['pipeline_id']) && !isset($data['pipeline_id'])) {
             $response->jsonError('Pipeline e obrigatorio quando uma etapa e especificada', 422);
+
             return;
         }
 
         if (empty($updateData)) {
             $response->jsonError('Nenhum dado para atualizar', 400);
+
             return;
         }
 
         try {
-            Database::update('message_templates', $updateData, 'id = :id', [':id' => $id]);
+            TenantAwareDatabase::update('message_templates', $updateData, 'id = :id', [':id' => $id]);
 
-            $template = Database::fetch(
+            $template = TenantAwareDatabase::fetch(
                 "SELECT mt.*, p.name as pipeline_name, ps.name as stage_name 
                  FROM message_templates mt 
-                 LEFT JOIN pipelines p ON mt.pipeline_id = p.id 
-                 LEFT JOIN pipeline_stages ps ON mt.stage_id = ps.id 
-                 WHERE mt.id = :id", 
-                [':id' => $id]
+                 LEFT JOIN pipelines p ON mt.pipeline_id = p.id AND p.tenant_id = :tenant_id
+                 LEFT JOIN pipeline_stages ps ON mt.stage_id = ps.id AND ps.tenant_id = :tenant_id
+                 WHERE mt.id = :id AND mt.tenant_id = :tenant_id",
+                TenantAwareDatabase::mergeTenantParams([':id' => $id])
             );
 
             $response->jsonSuccess(['template' => $template], 'Template atualizado com sucesso');
@@ -200,11 +221,12 @@ class TemplateController
 
         if (!$id) {
             $response->jsonError('ID nao fornecido', 400);
+
             return;
         }
 
         try {
-            Database::delete('message_templates', 'id = :id', [':id' => $id]);
+            TenantAwareDatabase::delete('message_templates', 'id = :id', [':id' => $id]);
 
             $response->jsonSuccess([], 'Template excluido com sucesso');
         } catch (\Exception $e) {
@@ -221,6 +243,7 @@ class TemplateController
         $text = trim($text, '-');
         $text = preg_replace('~-+~', '-', $text);
         $text = strtolower($text);
+
         return $text ?: 'template';
     }
 }

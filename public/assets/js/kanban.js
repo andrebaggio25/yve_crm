@@ -3,6 +3,7 @@
  */
 
 const Kanban = {
+    leadChatPollId: null,
     pipelineId: null,
     columns: [],
     isLoading: false,
@@ -588,6 +589,13 @@ const Kanban = {
             if (editBar) {
                 editBar.classList.toggle('hidden', name !== 'summary');
             }
+
+            const leadId = parseInt(document.getElementById('lead-detail-modal')?.dataset?.leadId || '0', 10);
+            if (name === 'chat' && leadId) {
+                this.startLeadChat(leadId, bodyEl);
+            } else {
+                this.stopLeadChat();
+            }
         };
 
         tabs.forEach((t) => {
@@ -603,6 +611,83 @@ const Kanban = {
         });
 
         activate('summary');
+    },
+
+    stopLeadChat() {
+        if (this.leadChatPollId) {
+            clearInterval(this.leadChatPollId);
+            this.leadChatPollId = null;
+        }
+    },
+
+    async startLeadChat(leadId, bodyEl) {
+        this.stopLeadChat();
+        const statusEl = bodyEl.querySelector('#lead-chat-status');
+        const box = bodyEl.querySelector('#lead-chat-messages');
+        const inp = bodyEl.querySelector('#lead-chat-input');
+        const btn = bodyEl.querySelector('#lead-chat-send');
+        const form = bodyEl.querySelector('#lead-chat-form');
+
+        const render = async () => {
+            try {
+                const convRes = await API.get(`/api/conversations/by-lead/${leadId}`);
+                const conv = convRes.data?.conversation;
+                if (!conv || !conv.id) {
+                    if (statusEl) statusEl.textContent = 'Nenhuma conversa WhatsApp vinculada a este lead.';
+                    if (box) box.innerHTML = '';
+                    if (inp) inp.disabled = true;
+                    if (btn) btn.disabled = true;
+                    return;
+                }
+                if (statusEl) statusEl.textContent = `Conversa #${conv.id} · ${conv.contact_phone || ''}`;
+                if (inp) inp.disabled = false;
+                if (btn) btn.disabled = false;
+
+                const msgRes = await API.get(`/api/conversations/${conv.id}/messages`);
+                const msgs = msgRes.data?.messages || [];
+                if (box) {
+                    if (!msgs.length) {
+                        box.innerHTML = '<p class="text-xs text-slate-500">Sem mensagens ainda.</p>';
+                    } else {
+                        box.innerHTML = msgs
+                            .map((m) => {
+                                const out = m.direction === 'outbound';
+                                const media =
+                                    m.media_url && String(m.media_url).startsWith('http')
+                                        ? `<div class="mt-1"><a href="${this.escapeHtml(m.media_url)}" target="_blank" rel="noopener" class="text-xs text-primary-600 underline">Midia</a></div>`
+                                        : '';
+                                return `<div class="flex ${out ? 'justify-end' : 'justify-start'}"><div class="max-w-[90%] rounded-xl px-2 py-1.5 text-xs ${out ? 'bg-primary-600 text-white' : 'bg-slate-100 text-slate-800'}">${this.escapeHtml(m.content || '')}${media}</div></div>`;
+                            })
+                            .join('');
+                        box.scrollTop = box.scrollHeight;
+                    }
+                }
+                bodyEl.dataset.chatConversationId = String(conv.id);
+            } catch (e) {
+                console.warn(e);
+                if (statusEl) statusEl.textContent = 'Erro ao carregar chat.';
+            }
+        };
+
+        await render();
+        this.leadChatPollId = setInterval(render, 5000);
+
+        if (form && !form.dataset.bound) {
+            form.dataset.bound = '1';
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const cid = bodyEl.dataset.chatConversationId;
+                const text = (inp?.value || '').trim();
+                if (!cid || !text) return;
+                try {
+                    await API.post(`/api/conversations/${cid}/messages`, { text });
+                    inp.value = '';
+                    await render();
+                } catch (err) {
+                    alert(err.message || 'Erro ao enviar');
+                }
+            });
+        }
     },
 
     async refreshLeadDetailEvents(leadId, bodyEl) {
@@ -1232,13 +1317,25 @@ const Kanban = {
             </div>
         `;
 
+        const chatSection = `
+            <div data-detail-panel="chat" class="hidden flex min-h-[320px] flex-col text-slate-900">
+                <div id="lead-chat-status" class="mb-2 text-xs text-slate-500">Carregando chat...</div>
+                <div id="lead-chat-messages" class="mb-3 max-h-72 flex-1 space-y-2 overflow-y-auto rounded-xl border border-slate-200 bg-white p-3 text-sm"></div>
+                <form id="lead-chat-form" class="flex flex-col gap-2 sm:flex-row">
+                    <textarea id="lead-chat-input" rows="2" class="min-w-0 flex-1 resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20" placeholder="Mensagem..." disabled></textarea>
+                    <button type="submit" id="lead-chat-send" class="shrink-0 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 disabled:opacity-50" disabled>Enviar</button>
+                </form>
+            </div>
+        `;
+
         return `
             <div class="px-3 pb-4 pt-3 sm:px-4 sm:pb-5">
                 <div class="sticky top-0 z-20 -mx-0.5 mb-3 space-y-2 rounded-xl bg-slate-50/95 p-2 pb-2.5 shadow-sm ring-1 ring-slate-200/80 backdrop-blur-sm">
                     <div class="flex gap-1 rounded-xl bg-slate-200/60 p-1 shadow-inner ring-1 ring-slate-200/80" role="tablist" aria-label="Secoes do lead">
-                        <button type="button" role="tab" data-detail-tab="summary" class="flex-1 rounded-xl px-3 py-2.5 text-sm font-medium transition">Resumo</button>
-                        <button type="button" role="tab" data-detail-tab="actions" class="flex-1 rounded-xl px-3 py-2.5 text-sm font-medium transition">Acoes</button>
-                        <button type="button" role="tab" data-detail-tab="history" class="flex-1 rounded-xl px-3 py-2.5 text-sm font-medium transition">Historico</button>
+                        <button type="button" role="tab" data-detail-tab="summary" class="flex-1 rounded-xl px-2 py-2.5 text-xs font-medium transition sm:text-sm">Resumo</button>
+                        <button type="button" role="tab" data-detail-tab="actions" class="flex-1 rounded-xl px-2 py-2.5 text-xs font-medium transition sm:text-sm">Acoes</button>
+                        <button type="button" role="tab" data-detail-tab="history" class="flex-1 rounded-xl px-2 py-2.5 text-xs font-medium transition sm:text-sm">Historico</button>
+                        <button type="button" role="tab" data-detail-tab="chat" class="flex-1 rounded-xl px-2 py-2.5 text-xs font-medium transition sm:text-sm">Chat</button>
                     </div>
                     <div id="lead-detail-edit-bar" class="flex flex-wrap items-center justify-end gap-2 px-0.5">
                         <button type="button" id="lead-detail-btn-cancel-top" class="hidden rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50">Cancelar</button>
@@ -1248,6 +1345,7 @@ const Kanban = {
                 ${summarySection}
                 ${actionsSection}
                 ${historySection}
+                ${chatSection}
             </div>`;
     },
 
@@ -1342,6 +1440,7 @@ const Kanban = {
     },
 
     closeLeadDetail() {
+        this.stopLeadChat();
         const modal = document.getElementById('lead-detail-modal');
         if (!modal) return;
         modal.classList.add('hidden');

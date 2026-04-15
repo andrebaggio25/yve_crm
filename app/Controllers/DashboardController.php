@@ -4,7 +4,7 @@ namespace App\Controllers;
 
 use App\Core\Request;
 use App\Core\Response;
-use App\Core\Database;
+use App\Core\TenantAwareDatabase;
 
 class DashboardController
 {
@@ -12,7 +12,7 @@ class DashboardController
     {
         $response->view('dashboard.index', [
             'title' => 'Dashboard',
-            'pageTitle' => 'Dashboard'
+            'pageTitle' => 'Dashboard',
         ]);
     }
 
@@ -23,65 +23,65 @@ class DashboardController
         $userId = $request->get('user_id');
 
         $dateFrom = date('Y-m-d', strtotime("-{$period} days"));
-        
-        $whereClauses = ['deleted_at IS NULL'];
-        $params = [];
-        
+
+        $whereClauses = ['l.deleted_at IS NULL', 'l.tenant_id = :tenant_id'];
+        $params = TenantAwareDatabase::mergeTenantParams();
+
         if ($pipelineId) {
-            $whereClauses[] = 'pipeline_id = :pipeline_id';
+            $whereClauses[] = 'l.pipeline_id = :pipeline_id';
             $params[':pipeline_id'] = $pipelineId;
         }
-        
+
         if ($userId) {
-            $whereClauses[] = 'assigned_user_id = :user_id';
+            $whereClauses[] = 'l.assigned_user_id = :user_id';
             $params[':user_id'] = $userId;
         }
-        
+
         $whereSql = implode(' AND ', $whereClauses);
-        
-        $totalLeads = Database::fetch(
-            "SELECT COUNT(*) as total FROM leads WHERE {$whereSql} AND created_at >= :date_from",
+
+        $totalLeads = TenantAwareDatabase::fetch(
+            "SELECT COUNT(*) as total FROM leads l WHERE {$whereSql} AND l.created_at >= :date_from",
             array_merge($params, [':date_from' => $dateFrom])
         )['total'] ?? 0;
 
-        $leadsByStage = Database::fetchAll(
+        $leadsByStage = TenantAwareDatabase::fetchAll(
             "SELECT ps.name as stage_name, COUNT(l.id) as total, SUM(l.value) as value
              FROM leads l
-             JOIN pipeline_stages ps ON l.stage_id = ps.id
-             WHERE l.{$whereSql}
+             JOIN pipeline_stages ps ON l.stage_id = ps.id AND ps.tenant_id = l.tenant_id
+             WHERE {$whereSql}
              GROUP BY ps.id, ps.name
              ORDER BY ps.position",
             $params
         );
 
-        $wonLeads = Database::fetch(
-            "SELECT COUNT(*) as total, SUM(value) as value FROM leads 
-             WHERE status = 'won' AND {$whereSql} AND won_at >= :date_from",
+        $wonLeads = TenantAwareDatabase::fetch(
+            "SELECT COUNT(*) as total, SUM(l.value) as value FROM leads l
+             WHERE l.status = 'won' AND {$whereSql} AND l.won_at >= :date_from",
             array_merge($params, [':date_from' => $dateFrom])
         );
 
-        $lostLeads = Database::fetch(
-            "SELECT COUNT(*) as total FROM leads 
-             WHERE status = 'lost' AND {$whereSql} AND lost_at >= :date_from",
+        $lostLeads = TenantAwareDatabase::fetch(
+            "SELECT COUNT(*) as total FROM leads l
+             WHERE l.status = 'lost' AND {$whereSql} AND l.lost_at >= :date_from",
             array_merge($params, [':date_from' => $dateFrom])
         );
 
-        $activeLeads = Database::fetch(
-            "SELECT COUNT(*) as total FROM leads WHERE status = 'active' AND {$whereSql}",
+        $activeLeads = TenantAwareDatabase::fetch(
+            "SELECT COUNT(*) as total FROM leads l WHERE l.status = 'active' AND {$whereSql}",
             $params
         )['total'] ?? 0;
 
-        $conversionRate = $totalLeads > 0 
-            ? round(($wonLeads['total'] / $totalLeads) * 100, 2) 
+        $conversionRate = $totalLeads > 0
+            ? round(($wonLeads['total'] / $totalLeads) * 100, 2)
             : 0;
 
-        $avgDealValue = $wonLeads['total'] > 0 
-            ? round($wonLeads['value'] / $wonLeads['total'], 2) 
+        $avgDealValue = $wonLeads['total'] > 0
+            ? round($wonLeads['value'] / $wonLeads['total'], 2)
             : 0;
 
-        $leadsOverdue = Database::fetch(
-            "SELECT COUNT(*) as total FROM leads 
-             WHERE next_action_at < NOW() AND status = 'active' AND {$whereSql}",
+        $leadsOverdue = TenantAwareDatabase::fetch(
+            "SELECT COUNT(*) as total FROM leads l
+             WHERE l.next_action_at < NOW() AND l.status = 'active' AND {$whereSql}",
             $params
         )['total'] ?? 0;
 
@@ -94,7 +94,7 @@ class DashboardController
             'conversion_rate' => $conversionRate,
             'avg_deal_value' => $avgDealValue,
             'leads_overdue' => (int) $leadsOverdue,
-            'leads_by_stage' => $leadsByStage
+            'leads_by_stage' => $leadsByStage,
         ]);
     }
 }

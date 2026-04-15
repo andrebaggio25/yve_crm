@@ -6,6 +6,7 @@ use App\Core\Request;
 use App\Core\Response;
 use App\Core\Session;
 use App\Core\Database;
+use App\Core\TenantContext;
 use App\Core\App;
 
 class AuthController
@@ -41,10 +42,13 @@ class AuthController
         }
         
         $user = Database::fetch(
-            "SELECT * FROM users WHERE email = :email AND status = 'active' AND deleted_at IS NULL",
+            "SELECT u.* FROM users u
+             LEFT JOIN tenants t ON t.id = u.tenant_id
+             WHERE u.email = :email AND u.status = 'active' AND u.deleted_at IS NULL
+               AND (u.role = 'superadmin' OR t.status IN ('active','trial'))",
             [':email' => $data['email']]
         );
-        
+
         if (!$user || !password_verify($data['password'], $user['password_hash'])) {
             if ($request->isJson()) {
                 $response->jsonError('Email ou senha incorretos', 401);
@@ -57,9 +61,14 @@ class AuthController
         }
         
         unset($user['password_hash']);
-        
+
+        TenantContext::clear();
+        Session::remove('_tenant_cache');
+        Session::remove('impersonate_tenant_id');
+
         Session::set('user', $user);
-        Session::regenerate();
+        // Forcar regeneracao imediata do session ID para prevenir session fixation
+        session_regenerate_id(true);
 
         App::log("Login realizado: user_id={$user['id']} email={$user['email']}");
 

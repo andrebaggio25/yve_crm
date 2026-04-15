@@ -202,7 +202,18 @@ class Session
     public static function hasRole(string $role): bool
     {
         $user = self::user();
-        return $user && ($user['role'] === $role || $user['role'] === 'admin');
+        if (!$user) {
+            return false;
+        }
+        $r = (string) ($user['role'] ?? '');
+        if ($r === $role) {
+            return true;
+        }
+        if ($role === 'admin' && ($r === 'admin' || $r === 'superadmin')) {
+            return true;
+        }
+
+        return false;
     }
 
     public static function logout(): void

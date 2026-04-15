@@ -1,0 +1,393 @@
+<?php
+
+namespace App\Controllers;
+
+use App\Core\App;
+use App\Core\Database;
+use App\Core\Request;
+use App\Core\Response;
+use App\Core\TenantAwareDatabase;
+use App\Services\WhatsApp\EvolutionApiService;
+
+/**
+ * Configuracao WhatsApp por tenant.
+ * As credenciais da API (URL + API Key) vem das configuracoes globais do superadmin.
+ * Cada tenant configura apenas o nome da instancia e conecta seu numero.
+ */
+class WhatsAppInstanceController
+{
+    /**
+     * Busca configuracoes globais da Evolution API (definidas pelo superadmin).
+     */
+    private function getGlobalConfig(): array
+    {
+        // Busca do tenant id=0 (configuracoes do sistema) ou do .env como fallback
+        $row = Database::fetch("SELECT settings_json FROM tenants WHERE id = 0 LIMIT 1");
+        $settings = [];
+        if ($row && !empty($row['settings_json'])) {
+            $decoded = json_decode($row['settings_json'], true);
+            $settings = is_array($decoded) ? $decoded : [];
+        }
+
+        return [
+            'api_url' => $settings['evolution_default_api_url'] ?? '',
+            'api_key' => $settings['evolution_global_api_key'] ?? '',
+            'enabled' => ($settings['evolution_enabled'] ?? false) !== false,
+        ];
+    }
+
+    public function page(Request $request, Response $response): void
+    {
+        $global = $this->getGlobalConfig();
+
+        $response->view('settings.whatsapp', [
+            'title' => 'WhatsApp',
+            'pageTitle' => 'Integracao WhatsApp',
+            'globalEnabled' => $global['enabled'],
+            'globalConfigured' => !empty($global['api_url']) && !empty($global['api_key']),
+        ]);
+    }
+
+    public function apiList(Request $request, Response $response): void
+    {
+        try {
+            $rows = TenantAwareDatabase::fetchAll(
+                'SELECT id, name, instance_name, status, phone_number, phone_connected, webhook_token, created_at, updated_at FROM whatsapp_instances WHERE tenant_id = :tenant_id ORDER BY id ASC',
+                TenantAwareDatabase::mergeTenantParams()
+            );
+
+            // Busca info do tenant para preview do nome da instancia
+            $tid = \App\Core\TenantContext::getEffectiveTenantId();
+            $tenant = Database::fetch('SELECT slug FROM tenants WHERE id = :id', [':id' => $tid]);
+
+            // Adiciona info se a integracao global esta configurada
+            $global = $this->getGlobalConfig();
+
+            $response->jsonSuccess([
+                'instances' => $rows,
+                'global' => [
+                    'enabled' => $global['enabled'],
+                    'configured' => !empty($global['api_url']) && !empty($global['api_key']),
+                ],
+                'tenant_slug' => $tenant['slug'] ?? ('tenant' . $tid),
+            ]);
+        } catch (\Throwable $e) {
+            App::logError('WA list', $e);
+            $response->jsonError('Erro ao listar', 500);
+        }
+    }
+
+    /**
+     * Cria instancia automaticamente baseada no slug do tenant.
+     * Nome da instancia: {tenant-slug}-yve (ex: yve-beauty-yve)
+     */
+    public function apiCreate(Request $request, Response $response): void
+    {
+        // Busca configuracoes globais
+        $global = $this->getGlobalConfig();
+
+        if (!$global['enabled']) {
+            $response->jsonError('Integracao WhatsApp desabilitada pelo administrador', 403);
+            return;
+        }
+
+        if (empty($global['api_url']) || empty($global['api_key'])) {
+            $response->jsonError('Integracao WhatsApp nao configurada. Contate o administrador.', 503);
+            return;
+        }
+
+        // Busca info do tenant atual para gerar nome unico
+        $tid = \App\Core\TenantContext::getEffectiveTenantId();
+        $tenant = Database::fetch('SELECT name, slug FROM tenants WHERE id = :id', [':id' => $tid]);
+        if (!$tenant) {
+            $response->jsonError('Tenant nao encontrado', 404);
+            return;
+        }
+
+        // Gera nome da instancia: {slug}-yve ou tenant{id}-yve se slug vazio
+        $baseName = !empty($tenant['slug']) ? $tenant['slug'] : 'tenant' . $tid;
+        $instanceName = $baseName . '-yve';
+
+        // Verifica se ja existe instancia para este tenant
+        $existing = TenantAwareDatabase::fetch(
+            'SELECT id FROM whatsapp_instances WHERE tenant_id = :tenant_id',
+            TenantAwareDatabase::mergeTenantParams()
+        );
+        if ($existing) {
+            $response->jsonError('Ja existe uma instancia configurada para este tenant.', 422);
+            return;
+        }
+
+        try {
+            $token = bin2hex(random_bytes(16));
+
+            // Criar instancia no banco local primeiro
+            $id = TenantAwareDatabase::insert('whatsapp_instances', [
+                'name' => $tenant['name'] ?? 'Principal',
+                'instance_name' => $instanceName,
+                'api_url' => $global['api_url'],
+                'api_key' => $global['api_key'],
+                'status' => 'pending',
+                'phone_connected' => false,
+                'webhook_token' => $token,
+            ]);
+
+            // Construir URL do webhook
+            $webhookUrl = '';
+            if (!empty($_SERVER['HTTP_HOST'])) {
+                $scheme = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https' : 'http';
+                $webhookUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . '/webhook/evolution/' . $token;
+            }
+
+            // Criar instancia na Evolution API
+            $evo = new EvolutionApiService();
+            $createRes = $evo->createInstance($global['api_url'], $global['api_key'], $instanceName, $webhookUrl);
+
+            if (!$createRes['ok']) {
+                // Se falhou na Evolution, remover do banco local (rollback)
+                TenantAwareDatabase::query(
+                    'DELETE FROM whatsapp_instances WHERE id = :id AND tenant_id = :tid',
+                    [':id' => $id, ':tid' => $tid]
+                );
+                App::logError('WA create on Evolution failed: ' . ($createRes['body']['message'] ?? 'Unknown error'));
+                $response->jsonError('Erro ao criar instancia na Evolution API: ' . ($createRes['body']['message'] ?? 'Erro desconhecido'), 500);
+                return;
+            }
+
+            $row = TenantAwareDatabase::fetch(
+                'SELECT * FROM whatsapp_instances WHERE id = :id AND tenant_id = :tenant_id',
+                TenantAwareDatabase::mergeTenantParams([':id' => $id])
+            );
+
+            App::log("Instancia WhatsApp '{$instanceName}' criada para tenant {$tid}");
+
+            $response->jsonSuccess([
+                'instance' => $row,
+                'instance_name' => $instanceName,
+                'message' => "Instancia '{$instanceName}' criada automaticamente. Clique em 'Conectar' para ativar."
+            ], 'Instancia criada');
+        } catch (\Throwable $e) {
+            App::logError('WA create', $e);
+            $response->jsonError('Erro ao criar instancia: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Obtem QR code para conexao.
+     */
+    public function apiQrCode(Request $request, Response $response): void
+    {
+        $id = (int) ($request->getParam('id') ?? 0);
+        if ($id <= 0) {
+            $response->jsonError('ID invalido', 400);
+            return;
+        }
+
+        try {
+            $row = TenantAwareDatabase::fetch(
+                'SELECT api_url, api_key, instance_name, phone_number FROM whatsapp_instances WHERE id = :id AND tenant_id = :tenant_id',
+                TenantAwareDatabase::mergeTenantParams([':id' => $id])
+            );
+
+            if (!$row) {
+                $response->jsonError('Instancia nao encontrada', 404);
+                return;
+            }
+
+            $evo = new EvolutionApiService();
+            $res = $evo->getQrCode($row['api_url'], $row['api_key'], $row['instance_name']);
+
+            // Atualiza status baseado na resposta
+            $status = 'disconnected';
+            $qrCode = null;
+            $pairingCode = null;
+
+            if ($res['ok'] && !empty($res['body'])) {
+                // API v2 retorna QR em 'code' ou 'base64', nao 'qrcode'
+                $qrCode = $res['body']['code'] ?? $res['body']['base64'] ?? $res['body']['qrcode'] ?? null;
+                $pairingCode = $res['body']['pairingCode'] ?? null;
+                $status = $qrCode ? 'awaiting_qr' : 'checking';
+            }
+
+            $response->jsonSuccess([
+                'qr_code' => $qrCode,
+                'pairing_code' => $pairingCode,
+                'status' => $status,
+                'phone_locked' => $row['phone_number'], // Numero ja conectado anteriormente (para seguranca)
+            ]);
+        } catch (\Throwable $e) {
+            App::logError('WA qr code', $e);
+            $response->jsonError('Erro ao obter QR code', 500);
+        }
+    }
+
+    /**
+     * Verifica status da conexao e atualiza info da instancia.
+     */
+    public function apiCheckStatus(Request $request, Response $response): void
+    {
+        $id = (int) ($request->getParam('id') ?? 0);
+        if ($id <= 0) {
+            $response->jsonError('ID invalido', 400);
+            return;
+        }
+
+        try {
+            $row = TenantAwareDatabase::fetch(
+                'SELECT api_url, api_key, instance_name, phone_number FROM whatsapp_instances WHERE id = :id AND tenant_id = :tenant_id',
+                TenantAwareDatabase::mergeTenantParams([':id' => $id])
+            );
+
+            if (!$row) {
+                $response->jsonError('Instancia nao encontrada', 404);
+                return;
+            }
+
+            $evo = new EvolutionApiService();
+
+            // Busca estado da conexao
+            $stateRes = $evo->getConnectionState($row['api_url'], $row['api_key'], $row['instance_name']);
+            $state = $stateRes['body']['state'] ?? 'unknown';
+            $isConnected = in_array($state, ['open', 'connected']);
+
+            $phoneNumber = $row['phone_number'];
+            $phoneFormatted = '';
+
+            // Se conectado, busca informacoes da instancia para obter numero
+            if ($isConnected) {
+                $infoRes = $evo->getInstanceInfo($row['api_url'], $row['api_key'], $row['instance_name']);
+                if ($infoRes['ok'] && !empty($infoRes['body'])) {
+                    $instanceInfo = $infoRes['body']['instance'] ?? null;
+                    if ($instanceInfo) {
+                        $newPhone = $instanceInfo['owner'] ?? null;
+                        if ($newPhone && $newPhone !== $phoneNumber) {
+                            // Numero mudou - atualiza
+                            $phoneNumber = $newPhone;
+                            TenantAwareDatabase::update(
+                                'whatsapp_instances',
+                                ['phone_number' => $phoneNumber],
+                                'id = :id',
+                                [':id' => $id]
+                            );
+                        }
+                    }
+                }
+
+                // Formata numero
+                if ($phoneNumber) {
+                    $phoneFormatted = $this->formatPhone($phoneNumber);
+                }
+            }
+
+            // Atualiza status no banco
+            $newStatus = $isConnected ? 'connected' : ($state === 'close' ? 'disconnected' : 'pending');
+            TenantAwareDatabase::update(
+                'whatsapp_instances',
+                [
+                    'status' => $newStatus,
+                    'phone_connected' => $isConnected,
+                    'updated_at' => date('Y-m-d H:i:s'),
+                ],
+                'id = :id',
+                [':id' => $id]
+            );
+
+            $response->jsonSuccess([
+                'status' => $newStatus,
+                'state' => $state,
+                'connected' => $isConnected,
+                'phone_number' => $phoneNumber,
+                'phone_formatted' => $phoneFormatted,
+                'phone_locked' => !empty($row['phone_number']), // Se ja teve numero, esta "travado"
+            ]);
+        } catch (\Throwable $e) {
+            App::logError('WA check status', $e);
+            $response->jsonError('Erro ao verificar status', 500);
+        }
+    }
+
+    public function apiConnection(Request $request, Response $response): void
+    {
+        $id = (int) ($request->getParam('id') ?? 0);
+        if ($id <= 0) {
+            $response->jsonError('ID invalido', 400);
+            return;
+        }
+
+        try {
+            $row = TenantAwareDatabase::fetch(
+                'SELECT api_url, api_key, instance_name FROM whatsapp_instances WHERE id = :id AND tenant_id = :tenant_id',
+                TenantAwareDatabase::mergeTenantParams([':id' => $id])
+            );
+
+            if (!$row) {
+                $response->jsonError('Nao encontrado', 404);
+                return;
+            }
+
+            $evo = new EvolutionApiService();
+            $res = $evo->getConnectionState($row['api_url'], $row['api_key'], $row['instance_name']);
+            $response->jsonSuccess(['evolution' => $res]);
+        } catch (\Throwable $e) {
+            App::logError('WA connection', $e);
+            $response->jsonError('Erro', 500);
+        }
+    }
+
+    /**
+     * Desconecta a instancia (logout).
+     */
+    public function apiDisconnect(Request $request, Response $response): void
+    {
+        $id = (int) ($request->getParam('id') ?? 0);
+        if ($id <= 0) {
+            $response->jsonError('ID invalido', 400);
+            return;
+        }
+
+        try {
+            $row = TenantAwareDatabase::fetch(
+                'SELECT api_url, api_key, instance_name FROM whatsapp_instances WHERE id = :id AND tenant_id = :tenant_id',
+                TenantAwareDatabase::mergeTenantParams([':id' => $id])
+            );
+
+            if (!$row) {
+                $response->jsonError('Instancia nao encontrada', 404);
+                return;
+            }
+
+            $evo = new EvolutionApiService();
+            $res = $evo->logout($row['api_url'], $row['api_key'], $row['instance_name']);
+
+            if ($res['ok']) {
+                // Atualiza status
+                TenantAwareDatabase::update(
+                    'whatsapp_instances',
+                    [
+                        'status' => 'disconnected',
+                        'phone_connected' => false,
+                        'updated_at' => date('Y-m-d H:i:s'),
+                    ],
+                    'id = :id',
+                    [':id' => $id]
+                );
+                $response->jsonSuccess([], 'Desconectado com sucesso');
+            } else {
+                $response->jsonError('Erro ao desconectar: ' . ($res['body']['message'] ?? 'Erro desconhecido'), 500);
+            }
+        } catch (\Throwable $e) {
+            App::logError('WA disconnect', $e);
+            $response->jsonError('Erro ao desconectar', 500);
+        }
+    }
+
+    private function formatPhone(string $phone): string
+    {
+        $phone = preg_replace('/\D/', '', $phone);
+        if (strlen($phone) === 13 && str_starts_with($phone, '55')) {
+            // Brasil: 55 + DDD + numero
+            return '+' . substr($phone, 0, 2) . ' (' . substr($phone, 2, 2) . ') ' . substr($phone, 4, 5) . '-' . substr($phone, 9);
+        }
+        return '+' . $phone;
+    }
+}
