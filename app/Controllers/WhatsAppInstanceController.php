@@ -18,10 +18,11 @@ class WhatsAppInstanceController
 {
     /**
      * Busca configuracoes globais da Evolution API (definidas pelo superadmin).
+     * Usa .env como fallback se nao houver config no banco.
      */
     private function getGlobalConfig(): array
     {
-        // Busca do tenant id=0 (configuracoes do sistema) ou do .env como fallback
+        // Busca do tenant id=0 (configuracoes do sistema)
         $row = Database::fetch("SELECT settings_json FROM tenants WHERE id = 0 LIMIT 1");
         $settings = [];
         if ($row && !empty($row['settings_json'])) {
@@ -29,10 +30,23 @@ class WhatsAppInstanceController
             $settings = is_array($decoded) ? $decoded : [];
         }
 
+        // Usar .env como fallback se nao houver config no banco
+        $apiUrl = $settings['evolution_default_api_url'] ?? \App\Core\Env::get('EVOLUTION_API_URL', '');
+        $apiKey = $settings['evolution_global_api_key'] ?? \App\Core\Env::get('EVOLUTION_API_KEY', '');
+        
+        // Enabled: se tiver URL e Key, considera habilitado (a menos que esteja explicitamente desabilitado no banco)
+        $enabledFromDb = $settings['evolution_enabled'] ?? null;
+        if ($enabledFromDb !== null) {
+            $enabled = $enabledFromDb !== false;
+        } else {
+            // Se nao tem config no banco, habilita se tiver credenciais no .env
+            $enabled = !empty($apiUrl) && !empty($apiKey);
+        }
+
         return [
-            'api_url' => $settings['evolution_default_api_url'] ?? '',
-            'api_key' => $settings['evolution_global_api_key'] ?? '',
-            'enabled' => ($settings['evolution_enabled'] ?? false) !== false,
+            'api_url' => $apiUrl,
+            'api_key' => $apiKey,
+            'enabled' => $enabled,
         ];
     }
 
