@@ -2,13 +2,19 @@
  * WhatsApp Settings - Tenant
  * Gerencia conexao do numero de WhatsApp via Evolution API
  */
+console.log('[WhatsApp] Arquivo whatsapp-settings.js carregado!');
+
 document.addEventListener('DOMContentLoaded', function() {
+    console.log('[WhatsApp] DOMContentLoaded - Inicializando...');
     loadWhatsAppStatus();
 
     // Event listeners
     document.getElementById('btn-refresh')?.addEventListener('click', loadWhatsAppStatus);
     document.getElementById('btn-connect')?.addEventListener('click', showQrCode);
     document.getElementById('btn-new-qr')?.addEventListener('click', showQrCode);
+    
+    // Log para verificar se os botoes existem no DOM
+    console.log('[WhatsApp] btn-configure-webhook existe?', !!document.getElementById('btn-configure-webhook'));
 
     // Botao Ativar WhatsApp (cria instancia automaticamente)
     document.getElementById('btn-activate')?.addEventListener('click', async () => {
