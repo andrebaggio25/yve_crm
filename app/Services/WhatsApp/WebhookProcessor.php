@@ -116,6 +116,35 @@ class WebhookProcessor
             return;
         }
 
+        // #region agent log — estrutura do payload LID
+        $remoteJidRaw = (string) ($key['remoteJid'] ?? '');
+        if (str_ends_with($remoteJidRaw, '@lid')) {
+            $safeKeys = array_map(static function ($v): string {
+                if (is_array($v)) {
+                    return 'array[' . implode(',', array_keys($v)) . ']';
+                }
+                if (is_string($v)) {
+                    return 'str(' . strlen($v) . ')';
+                }
+                if (is_bool($v)) {
+                    return $v ? 'true' : 'false';
+                }
+
+                return gettype($v);
+            }, $msg);
+            DebugAgentLog::write('H4', 'WebhookProcessor.php:processOneMessage', 'payload LID - estrutura completa', [
+                'msg_keys' => $safeKeys,
+                'key_keys' => array_keys($key),
+                'remote_jid_domain' => explode('@', $remoteJidRaw)[1] ?? '',
+                'remote_jid_alt' => DebugAgentLog::maskRecipient((string) ($key['remoteJidAlt'] ?? '')),
+                'participant' => DebugAgentLog::maskRecipient((string) ($key['participant'] ?? '')),
+                'has_contact' => isset($msg['contact']),
+                'has_jid' => isset($msg['jid']),
+                'has_phone' => isset($msg['phone']),
+            ]);
+        }
+        // #endregion
+
         $instRow = Database::fetch(
             'SELECT phone_number FROM whatsapp_instances WHERE id = :wid AND tenant_id = :tid LIMIT 1',
             [':wid' => $whatsappInstanceId, ':tid' => $tenantId]

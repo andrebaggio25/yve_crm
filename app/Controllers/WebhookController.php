@@ -37,7 +37,7 @@ class WebhookController
         }
 
         $event = (string) ($payload['event'] ?? '');
-        $rawLog = mb_substr($raw, 0, 2000);
+        $rawLog = mb_substr($raw, 0, 4000);
         App::log('[Webhook] POST evolution token=*** inst_id=' . (int) $inst['id'] . ' tenant_id=' . (int) $inst['tenant_id'] . ' event=' . ($event !== '' ? $event : '(vazio)') . ' raw_len=' . strlen($raw));
         App::log('[Webhook] raw_preview=' . $rawLog);
 
