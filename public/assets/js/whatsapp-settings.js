@@ -1,11 +1,12 @@
 /**
  * WhatsApp Settings - Tenant
  * Gerencia conexao do numero de WhatsApp via Evolution API
+ * v2026-04-15-14:55 - atualizado
  */
-console.log('[WhatsApp] Arquivo whatsapp-settings.js carregado!');
+console.log('[WhatsApp] ==== ARQUIVO CARREGADO ====');
 
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('[WhatsApp] DOMContentLoaded - Inicializando...');
+    console.log('[WhatsApp] ==== DOM READY ====');
     loadWhatsAppStatus();
 
     // Event listeners
@@ -13,8 +14,40 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('btn-connect')?.addEventListener('click', showQrCode);
     document.getElementById('btn-new-qr')?.addEventListener('click', showQrCode);
     
-    // Log para verificar se os botoes existem no DOM
-    console.log('[WhatsApp] btn-configure-webhook existe?', !!document.getElementById('btn-configure-webhook'));
+    // Verificar botoes
+    const btnWebhook = document.getElementById('btn-configure-webhook');
+    console.log('[WhatsApp] BOTAO WEBHOOK:', btnWebhook ? 'ENCONTRADO' : 'NAO ENCONTRADO');
+    if (btnWebhook) {
+        console.log('[WhatsApp] Adicionando listener ao botao webhook...');
+        btnWebhook.addEventListener('click', async function() {
+            console.log('[WhatsApp] ==== BOTAO WEBHOOK CLICADO ====');
+            const originalText = btnWebhook.textContent;
+            btnWebhook.disabled = true;
+            btnWebhook.textContent = 'Configurando...';
+
+            try {
+                console.log('[WhatsApp] Buscando instancia...');
+                const listRes = await API.get('/api/settings/whatsapp/instances');
+                console.log('[WhatsApp] Resposta:', listRes);
+                const instance = listRes.data?.instances?.[0];
+                if (!instance) {
+                    throw new Error('Nenhuma instancia encontrada');
+                }
+                console.log(`[WhatsApp] Chamando configure-webhook para ID ${instance.id}`);
+                const r = await API.post(`/api/settings/whatsapp/instances/${instance.id}/configure-webhook`, {});
+                console.log('[WhatsApp] Resposta:', r);
+                alert(r.message || 'Webhook configurado com sucesso!');
+            } catch (err) {
+                console.error('[WhatsApp] Erro:', err);
+                alert(err.message || 'Erro ao configurar webhook');
+            } finally {
+                btnWebhook.disabled = false;
+                btnWebhook.textContent = originalText;
+            }
+        });
+    } else {
+        console.error('[WhatsApp] BOTAO WEBHOOK NAO ENCONTRADO NO DOM!');
+    }
 
     // Botao Ativar WhatsApp (cria instancia automaticamente)
     document.getElementById('btn-activate')?.addEventListener('click', async () => {
@@ -78,41 +111,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Botao Configurar Webhook
-    console.log('[WhatsApp] Registrando event listener para btn-configure-webhook');
-    document.getElementById('btn-configure-webhook')?.addEventListener('click', async () => {
-        console.log('[WhatsApp] Botao Configurar Webhook clicado!');
-        const btn = document.getElementById('btn-configure-webhook');
-        if (!btn) {
-            console.error('[WhatsApp] Botao nao encontrado!');
-            return;
-        }
-        const originalText = btn.textContent;
-        btn.disabled = true;
-        btn.textContent = 'Configurando...';
-
-        try {
-            // Buscar instancia atual para obter o ID dinamico
-            console.log('[WhatsApp] Buscando instancia...');
-            const listRes = await API.get('/api/settings/whatsapp/instances');
-            console.log('[WhatsApp] Resposta listRes:', listRes);
-            const instance = listRes.data?.instances?.[0];
-            console.log('[WhatsApp] Instancia encontrada:', instance);
-            if (!instance) {
-                throw new Error('Nenhuma instancia encontrada');
-            }
-            console.log(`[WhatsApp] Chamando POST /api/settings/whatsapp/instances/${instance.id}/configure-webhook`);
-            const r = await API.post(`/api/settings/whatsapp/instances/${instance.id}/configure-webhook`, {});
-            console.log('[WhatsApp] Resposta configure-webhook:', r);
-            alert(r.message || 'Webhook configurado com sucesso!');
-        } catch (err) {
-            console.error('[WhatsApp] Erro ao configurar webhook:', err);
-            alert(err.message || 'Erro ao configurar webhook');
-        } finally {
-            btn.disabled = false;
-            btn.textContent = originalText;
-        }
-    });
 });
 
 async function loadWhatsAppStatus() {
