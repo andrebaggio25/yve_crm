@@ -318,9 +318,9 @@ class WhatsAppInstanceController
             $stateRes = $evo->getConnectionState($row['api_url'], $row['api_key'], $row['instance_name']);
             App::log("[WhatsApp] apiCheckStatus - Resposta connectionState: " . json_encode($stateRes));
             
-            // Evolution API pode retornar state em diferentes formatos
-            $state = $stateRes['body']['state'] ?? $stateRes['body']['connectionStatus'] ?? 'unknown';
-            $isConnected = in_array(strtolower($state), ['open', 'connected', 'connecting']);
+            // Evolution API retorna state em $body['instance']['state']
+            $state = $stateRes['body']['instance']['state'] ?? $stateRes['body']['state'] ?? 'unknown';
+            $isConnected = in_array(strtolower($state), ['open', 'connected']);
             App::log("[WhatsApp] apiCheckStatus - State: {$state}, IsConnected: " . ($isConnected ? 'true' : 'false'));
 
             $phoneNumber = $row['phone_number'];
@@ -329,19 +329,26 @@ class WhatsAppInstanceController
             // Se conectado, busca informacoes da instancia para obter numero
             if ($isConnected) {
                 $infoRes = $evo->getInstanceInfo($row['api_url'], $row['api_key'], $row['instance_name']);
+                App::log("[WhatsApp] apiCheckStatus - Resposta getInstanceInfo: " . json_encode($infoRes));
                 if ($infoRes['ok'] && !empty($infoRes['body'])) {
-                    $instanceInfo = $infoRes['body']['instance'] ?? null;
+                    // fetchInstances retorna array, pegamos primeira instancia
+                    $instanceInfo = is_array($infoRes['body']) ? $infoRes['body'][0] : ($infoRes['body']['instance'] ?? null);
                     if ($instanceInfo) {
-                        $newPhone = $instanceInfo['owner'] ?? null;
-                        if ($newPhone && $newPhone !== $phoneNumber) {
-                            // Numero mudou - atualiza
-                            $phoneNumber = $newPhone;
-                            TenantAwareDatabase::update(
-                                'whatsapp_instances',
-                                ['phone_number' => $phoneNumber],
-                                'id = :id',
-                                [':id' => $id]
-                            );
+                        // Numero esta em ownerJid (formato: 554191788844@s.whatsapp.net)
+                        $newPhone = $instanceInfo['ownerJid'] ?? null;
+                        if ($newPhone) {
+                            // Remove o @s.whatsapp.net
+                            $newPhone = str_replace('@s.whatsapp.net', '', $newPhone);
+                            if ($newPhone !== $phoneNumber) {
+                                // Numero mudou - atualiza
+                                $phoneNumber = $newPhone;
+                                TenantAwareDatabase::update(
+                                    'whatsapp_instances',
+                                    ['phone_number' => $phoneNumber],
+                                    'id = :id',
+                                    [':id' => $id]
+                                );
+                            }
                         }
                     }
                 }
