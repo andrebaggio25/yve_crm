@@ -126,6 +126,56 @@ try {
     echo "HTTP: {$http3}\n";
     echo "Response: " . substr($raw3, 0, 500) . "\n";
     
+    // Teste 4: Payload minimo (apenas instanceName)
+    echo "\n=== Teste 4: Payload minimo (apenas instanceName) ===\n";
+    $minimalPayload = json_encode([
+        'instanceName' => 'teste-minimal-' . time()
+    ]);
+    
+    $ch4 = curl_init($apiUrl . '/instance/create');
+    curl_setopt($ch4, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch4, CURLOPT_POST, true);
+    curl_setopt($ch4, CURLOPT_POSTFIELDS, $minimalPayload);
+    curl_setopt($ch4, CURLOPT_HTTPHEADER, [
+        'Content-Type: application/json',
+        'apikey: ' . $apiKey
+    ]);
+    curl_setopt($ch4, CURLOPT_TIMEOUT, 30);
+    
+    $raw4 = curl_exec($ch4);
+    $http4 = curl_getinfo($ch4, CURLINFO_HTTP_CODE);
+    curl_close($ch4);
+    
+    echo "Payload: {$minimalPayload}\n";
+    echo "HTTP: {$http4}\n";
+    echo "Response: {$raw4}\n";
+    
+    // Teste 5: Com integration especificada
+    echo "\n=== Teste 5: Com integration='WHATSAPP-BAILEYS' ===\n";
+    $payload5 = json_encode([
+        'instanceName' => 'teste-int-' . time(),
+        'integration' => 'WHATSAPP-BAILEYS',
+        'qrcode' => true
+    ]);
+    
+    $ch5 = curl_init($apiUrl . '/instance/create');
+    curl_setopt($ch5, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch5, CURLOPT_POST, true);
+    curl_setopt($ch5, CURLOPT_POSTFIELDS, $payload5);
+    curl_setopt($ch5, CURLOPT_HTTPHEADER, [
+        'Content-Type: application/json',
+        'apikey: ' . $apiKey
+    ]);
+    curl_setopt($ch5, CURLOPT_TIMEOUT, 30);
+    
+    $raw5 = curl_exec($ch5);
+    $http5 = curl_getinfo($ch5, CURLINFO_HTTP_CODE);
+    curl_close($ch5);
+    
+    echo "Payload: {$payload5}\n";
+    echo "HTTP: {$http5}\n";
+    echo "Response: {$raw5}\n";
+    
     echo "\n=== Teste via Service (EvolutionApiService) ===\n";
     $result = $evo->createInstance(
         $apiUrl,
