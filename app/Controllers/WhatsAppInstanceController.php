@@ -224,23 +224,38 @@ class WhatsAppInstanceController
             );
 
             // Configurar webhook na Evolution API
+            $webhookConfigured = false;
+            $webhookError = null;
             if (!empty($webhookUrl)) {
                 App::log("[WhatsApp] apiCreate - Configurando webhook: {$webhookUrl}");
                 $webhookRes = $evo->setWebhook($global['api_url'], $global['api_key'], $instanceName, $webhookUrl);
                 App::log('[WhatsApp] apiCreate - Resposta setWebhook: ' . json_encode($webhookRes));
-                
-                if (!$webhookRes['ok']) {
-                    App::logError("[WhatsApp] apiCreate - Falha ao configurar webhook: HTTP {$webhookRes['http']}");
-                    // Nao falha a criacao, apenas loga o erro
+
+                if ($webhookRes['ok']) {
+                    $webhookConfigured = true;
+                    App::log("[WhatsApp] apiCreate - Webhook configurado com sucesso para instancia {$instanceName}");
+                } else {
+                    $webhookError = "HTTP {$webhookRes['http']} - " . (is_array($webhookRes['body']) ? json_encode($webhookRes['body']) : substr($webhookRes['raw'] ?? '', 0, 200));
+                    App::logError("[WhatsApp] apiCreate - Falha ao configurar webhook: {$webhookError}");
                 }
             }
 
             App::log("Instancia WhatsApp '{$instanceName}' criada para tenant {$tid}");
 
+            $message = "Instancia '{$instanceName}' criada automaticamente.";
+            if ($webhookConfigured) {
+                $message .= " Webhook configurado com sucesso.";
+            } elseif ($webhookError) {
+                $message .= " A instancia foi criada, mas o webhook nao foi configurado automaticamente. Clique em 'Configurar Webhook' apos conectar.";
+            }
+            $message .= " Clique em 'Conectar' para ativar.";
+
             $response->jsonSuccess([
                 'instance' => $row,
                 'instance_name' => $instanceName,
-                'message' => "Instancia '{$instanceName}' criada automaticamente. Clique em 'Conectar' para ativar."
+                'webhook_configured' => $webhookConfigured,
+                'webhook_error' => $webhookError,
+                'message' => $message
             ], 'Instancia criada');
         } catch (\Throwable $e) {
             App::logError('WA create', $e);

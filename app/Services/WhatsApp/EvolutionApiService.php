@@ -116,11 +116,22 @@ class EvolutionApiService
         $baseUrl = rtrim($baseUrl, '/');
         $url = $baseUrl . '/webhook/set/' . rawurlencode($instanceName);
 
+        // Payload conforme documentacao Evolution API v2
+        // https://docs.evoapicloud.com/instances/events/webhook
         $data = [
             'webhook' => [
                 'enabled' => true,
                 'url' => $webhookUrl,
-                'events' => ['MESSAGES_UPSERT', 'CONNECTION_UPDATE'],
+                'byEvents' => false,
+                'base64' => false,
+                'events' => [
+                    'MESSAGES_UPSERT',
+                    'MESSAGES_UPDATE',
+                    'MESSAGES_DELETE',
+                    'CONNECTION_UPDATE',
+                    'QRCODE_UPDATED',
+                    'PRESENCE_UPDATE',
+                ],
             ],
         ];
 
