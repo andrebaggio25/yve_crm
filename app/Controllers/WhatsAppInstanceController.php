@@ -292,12 +292,16 @@ class WhatsAppInstanceController
     public function apiCheckStatus(Request $request, Response $response): void
     {
         $id = (int) ($request->getParam('id') ?? 0);
+        App::log("[WhatsApp] apiCheckStatus - ID recebido: {$id}");
+        
         if ($id <= 0) {
+            App::log("[WhatsApp] apiCheckStatus - ID invalido");
             $response->jsonError('ID invalido', 400);
             return;
         }
 
         try {
+            App::log("[WhatsApp] apiCheckStatus - Buscando instancia no banco...");
             $row = TenantAwareDatabase::fetch(
                 'SELECT api_url, api_key, instance_name, phone_number FROM whatsapp_instances WHERE id = :id AND tenant_id = :tenant_id',
                 TenantAwareDatabase::mergeTenantParams([':id' => $id])

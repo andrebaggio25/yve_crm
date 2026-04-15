@@ -114,6 +114,7 @@ async function loadWhatsAppStatus() {
         }
 
         // Tem instancia - mostra card de conexao
+        console.log('[WhatsApp] Mostrando cards de conexao...');
         document.getElementById('activate-card')?.classList.add('hidden');
         document.getElementById('connection-card')?.classList.remove('hidden');
         document.getElementById('webhook-info')?.classList.remove('hidden');
@@ -127,7 +128,7 @@ async function loadWhatsAppStatus() {
             document.getElementById('webhook-url').textContent = `${host}/webhook/evolution/${instance.webhook_token}`;
         }
 
-        console.log('[WhatsApp] Chamando checkConnectionStatus para ID:', instance.id);
+        console.log('[WhatsApp] Instancia ID:', instance.id, 'Tipo:', typeof instance.id);
         try {
             await checkConnectionStatus(instance.id);
             console.log('[WhatsApp] checkConnectionStatus concluido');
