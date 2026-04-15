@@ -127,7 +127,13 @@ async function loadWhatsAppStatus() {
             document.getElementById('webhook-url').textContent = `${host}/webhook/evolution/${instance.webhook_token}`;
         }
 
-        await checkConnectionStatus(instance.id);
+        console.log('[WhatsApp] Chamando checkConnectionStatus para ID:', instance.id);
+        try {
+            await checkConnectionStatus(instance.id);
+            console.log('[WhatsApp] checkConnectionStatus concluido');
+        } catch (e) {
+            console.error('[WhatsApp] checkConnectionStatus falhou:', e);
+        }
     } catch (err) {
         console.error('Erro ao carregar status:', err);
         document.getElementById('global-text').textContent = 'Erro ao carregar status';
