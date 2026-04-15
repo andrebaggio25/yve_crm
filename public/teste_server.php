@@ -179,7 +179,7 @@ try {
         $apiUrl,
         $apiKey,
         'teste-service-' . time(),
-        'https://homcrm.yvebeauty.com/webhook/evolution/teste'
+        null // Sem webhook - igual ao Teste 5 que funcionou
     );
     
     echo "\n=== Resultado ===\n";
