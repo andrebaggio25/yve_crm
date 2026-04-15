@@ -350,6 +350,8 @@ class WhatsAppInstanceController
 
             // Atualiza status no banco
             $newStatus = $isConnected ? 'connected' : ($state === 'close' ? 'disconnected' : 'pending');
+            App::log("[WhatsApp] apiCheckStatus - Novo status: {$newStatus}, atualizando banco...");
+            
             TenantAwareDatabase::update(
                 'whatsapp_instances',
                 [
@@ -361,6 +363,7 @@ class WhatsAppInstanceController
                 [':id' => $id]
             );
 
+            App::log("[WhatsApp] apiCheckStatus - Retornando: status={$newStatus}, state={$state}, connected=" . ($isConnected ? 'true' : 'false'));
             $response->jsonSuccess([
                 'status' => $newStatus,
                 'state' => $state,

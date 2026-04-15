@@ -167,17 +167,21 @@ function updateGlobalStatus(global, instance) {
 }
 
 async function checkConnectionStatus(instanceId) {
+    console.log('[WhatsApp] checkConnectionStatus - ID:', instanceId);
     try {
         const r = await API.get(`/api/settings/whatsapp/instances/${instanceId}/check-status`);
+        console.log('[WhatsApp] checkConnectionStatus - Resposta completa:', r);
         const data = r.data || {};
+        console.log('[WhatsApp] checkConnectionStatus - Data:', data);
         updateConnectionUI(data);
     } catch (err) {
-        console.error('Erro ao verificar conexao:', err);
+        console.error('[WhatsApp] checkConnectionStatus - Erro:', err);
         showDisconnected('Erro ao verificar conexao');
     }
 }
 
 function updateConnectionUI(data) {
+    console.log('[WhatsApp] updateConnectionUI - data:', data);
     const statusIcon = document.getElementById('status-icon');
     const statusTitle = document.getElementById('status-title');
     const statusDesc = document.getElementById('status-desc');
@@ -187,6 +191,7 @@ function updateConnectionUI(data) {
     const btnConnect = document.getElementById('btn-connect');
     const btnDisconnect = document.getElementById('btn-disconnect');
 
+    console.log('[WhatsApp] updateConnectionUI - connected:', data.connected, 'state:', data.state);
     if (data.connected) {
         statusIcon.className = 'flex h-12 w-12 items-center justify-center rounded-full bg-green-100';
         statusIcon.innerHTML = '<svg class="h-6 w-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>';
@@ -278,17 +283,22 @@ function startConnectionPolling(instanceId) {
 
     pollingInterval = setInterval(async () => {
         try {
+            console.log('[WhatsApp Polling] Verificando status...');
             const r = await API.get(`/api/settings/whatsapp/instances/${instanceId}/check-status`);
             const data = r.data || {};
+            console.log('[WhatsApp Polling] Resposta:', data);
 
             if (data.connected) {
+                console.log('[WhatsApp Polling] Conectado! Atualizando tela...');
                 clearInterval(pollingInterval);
                 pollingInterval = null;
                 alert('WhatsApp conectado com sucesso!');
                 loadWhatsAppStatus();
+            } else {
+                console.log('[WhatsApp Polling] Ainda nao conectado. State:', data.state, 'Connected:', data.connected);
             }
         } catch (err) {
-            console.error('Erro no polling:', err);
+            console.error('[WhatsApp Polling] Erro:', err);
         }
     }, 3000);
 
