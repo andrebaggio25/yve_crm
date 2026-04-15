@@ -83,11 +83,17 @@ class EvolutionApiService
         $baseUrl = rtrim($baseUrl, '/');
         $url = $baseUrl . '/instance/create';
 
-        $payload = json_encode([
+        // Payload completo conforme documentacao Evolution API v2
+        $data = [
             'instanceName' => $instanceName,
-            'webhook' => $webhookUrl,
+            'qrcode' => true,
+            'webhook' => $webhookUrl ?? '',
             'webhook_by_events' => !empty($webhookUrl),
-        ], JSON_UNESCAPED_UNICODE);
+            'events' => ['MESSAGES_UPSERT', 'CONNECTION_UPDATE'],
+        ];
+
+        $payload = json_encode($data, JSON_UNESCAPED_UNICODE);
+        App::log("[EvolutionAPI] createInstance payload: " . $payload);
 
         return $this->request('POST', $url, $apiKey, $payload);
     }
