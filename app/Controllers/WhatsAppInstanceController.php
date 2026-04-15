@@ -482,36 +482,46 @@ class WhatsAppInstanceController
     public function apiConfigureWebhook(Request $request, Response $response): void
     {
         $id = (int) ($request->getParam('id') ?? 0);
+        App::log("[WhatsApp] apiConfigureWebhook - ID recebido: {$id}");
+        
         if ($id <= 0) {
+            App::log("[WhatsApp] apiConfigureWebhook - ID invalido");
             $response->jsonError('ID invalido', 400);
             return;
         }
 
         try {
+            App::log("[WhatsApp] apiConfigureWebhook - Buscando instancia no banco...");
             $row = TenantAwareDatabase::fetch(
                 'SELECT api_url, api_key, instance_name, webhook_token FROM whatsapp_instances WHERE id = :id AND tenant_id = :tenant_id',
                 TenantAwareDatabase::mergeTenantParams([':id' => $id])
             );
 
             if (!$row) {
+                App::log("[WhatsApp] apiConfigureWebhook - Instancia nao encontrada");
                 $response->jsonError('Instancia nao encontrada', 404);
                 return;
             }
+            App::log("[WhatsApp] apiConfigureWebhook - Instancia encontrada: {$row['instance_name']}");
 
             // Construir URL do webhook
             $webhookUrl = '';
+            App::log("[WhatsApp] apiConfigureWebhook - HTTP_HOST: " . ($_SERVER['HTTP_HOST'] ?? 'vazio'));
             if (!empty($_SERVER['HTTP_HOST'])) {
                 $scheme = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https' : 'http';
                 $webhookUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . '/webhook/evolution/' . $row['webhook_token'];
             }
+            App::log("[WhatsApp] apiConfigureWebhook - URL construida: {$webhookUrl}");
 
             if (empty($webhookUrl)) {
                 $response->jsonError('Nao foi possivel construir URL do webhook', 500);
                 return;
             }
 
+            App::log("[WhatsApp] apiConfigureWebhook - Chamando Evolution API para configurar webhook...");
             $evo = new EvolutionApiService();
             $res = $evo->setWebhook($row['api_url'], $row['api_key'], $row['instance_name'], $webhookUrl);
+            App::log("[WhatsApp] apiConfigureWebhook - Resposta Evolution: " . json_encode($res));
 
             if ($res['ok']) {
                 App::log("[WhatsApp] Webhook configurado para instancia {$row['instance_name']}: {$webhookUrl}");
@@ -522,8 +532,8 @@ class WhatsAppInstanceController
                 $response->jsonError('Falha ao configurar webhook: ' . $errorMsg, 500);
             }
         } catch (\Throwable $e) {
-            App::logError('WA configure webhook', $e);
-            $response->jsonError('Erro ao configurar webhook', 500);
+            App::logError('WA configure webhook: ' . $e->getMessage(), $e);
+            $response->jsonError('Erro ao configurar webhook: ' . $e->getMessage(), 500);
         }
     }
 
