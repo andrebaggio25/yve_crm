@@ -267,8 +267,9 @@ class WhatsAppInstanceController
             $pairingCode = null;
 
             if ($res['ok'] && !empty($res['body'])) {
-                // API v2 retorna QR em 'code' ou 'base64', nao 'qrcode'
-                $qrCode = $res['body']['code'] ?? $res['body']['base64'] ?? $res['body']['qrcode'] ?? null;
+                // API v2 retorna QR em 'base64' (imagem pronta) ou 'code' (texto)
+                // Preferir base64 para exibir imagem diretamente
+                $qrCode = $res['body']['base64'] ?? $res['body']['code'] ?? $res['body']['qrcode'] ?? null;
                 $pairingCode = $res['body']['pairingCode'] ?? null;
                 $status = $qrCode ? 'awaiting_qr' : 'checking';
             }
