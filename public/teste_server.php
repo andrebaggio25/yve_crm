@@ -5,10 +5,10 @@
  * Acesse: https://homcrm.yvebeauty.com/teste_server.php
  */
 
-require_once __DIR__ . '/app/Core/Env.php';
-\App\Core\Env::load(__DIR__);
+require_once __DIR__ . '/../app/Core/Env.php';
+\App\Core\Env::load(__DIR__ . '/..');
 
-require_once __DIR__ . '/app/Services/WhatsApp/EvolutionApiService.php';
+require_once __DIR__ . '/../app/Services/WhatsApp/EvolutionApiService.php';
 
 $evo = new \App\Services\WhatsApp\EvolutionApiService();
 
