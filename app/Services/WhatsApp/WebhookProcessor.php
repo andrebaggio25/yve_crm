@@ -4,6 +4,7 @@ namespace App\Services\WhatsApp;
 
 use App\Core\Database;
 use App\Core\App;
+use App\Helpers\DebugAgentLog;
 use App\Helpers\PhoneHelper;
 use App\Services\Automation\AutomationEngine;
 
@@ -97,13 +98,10 @@ class WebhookProcessor
             App::log('[WebhookProcessor] handleMessages: formato legado/array, count=' . count($messages));
         }
 
-        $senderJid = (string) ($payload['sender'] ?? '');
-
         foreach ($messages as $msg) {
             if (!is_array($msg)) {
                 continue;
             }
-            $msg['__webhook_sender'] = $senderJid;
             $this->processOneMessage($msg, $tenantId, $whatsappInstanceId, $event);
         }
     }
@@ -118,8 +116,13 @@ class WebhookProcessor
             return;
         }
 
-        $senderJid = (string) ($msg['__webhook_sender'] ?? '');
-        $resolved = $this->resolveContactFromKey($key, $senderJid);
+        $instRow = Database::fetch(
+            'SELECT phone_number FROM whatsapp_instances WHERE id = :wid AND tenant_id = :tid LIMIT 1',
+            [':wid' => $whatsappInstanceId, ':tid' => $tenantId]
+        );
+        $instancePhoneNorm = PhoneHelper::normalize((string) ($instRow['phone_number'] ?? ''));
+
+        $resolved = $this->resolveContactFromKey($key, $instancePhoneNorm !== '' ? $instancePhoneNorm : null);
         if ($resolved === null) {
             return;
         }
@@ -128,6 +131,16 @@ class WebhookProcessor
         $normalized = $resolved['normalized'];
         $waMetaJson = json_encode($resolved['wa_meta'], JSON_UNESCAPED_UNICODE);
         App::log("[WebhookProcessor] processOneMessage: phone={$normalized} event={$eventName} is_group=" . ($resolved['is_group'] ? '1' : '0'));
+
+        // #region agent log
+        DebugAgentLog::write('H1', 'WebhookProcessor.php:processOneMessage', 'resolved inbound peer', [
+            'is_group' => $resolved['is_group'],
+            'norm_len' => strlen($normalized),
+            'remote_jid' => DebugAgentLog::maskRecipient((string) ($key['remoteJid'] ?? '')),
+            'remote_jid_alt' => DebugAgentLog::maskRecipient((string) ($key['remoteJidAlt'] ?? '')),
+            'inst_norm_len' => strlen($instancePhoneNorm),
+        ]);
+        // #endregion
 
         $messageBlock = $msg['message'] ?? [];
         $text = '';
@@ -270,7 +283,7 @@ class WebhookProcessor
      *
      * @return array{digits: string, normalized: string, is_group: bool, wa_meta: array<string, mixed>}|null
      */
-    private function resolveContactFromKey(array $key, string $senderJid = ''): ?array
+    private function resolveContactFromKey(array $key, ?string $instancePhoneNorm = null): ?array
     {
         $remoteJid = (string) ($key['remoteJid'] ?? '');
         $remoteJidAlt = (string) ($key['remoteJidAlt'] ?? '');
@@ -278,6 +291,30 @@ class WebhookProcessor
 
         $isPhoneJid = static function (string $jid): bool {
             return $jid !== '' && (str_ends_with($jid, '@s.whatsapp.net') || str_ends_with($jid, '@c.us'));
+        };
+
+        $normFromPhoneJid = static function (string $jid): string {
+            $localPart = explode('@', $jid)[0] ?? '';
+
+            return PhoneHelper::normalize(preg_replace('/\D/', '', $localPart) ?: $localPart);
+        };
+
+        $pickPhonePeer = function (string ...$candidates) use ($isPhoneJid, $instancePhoneNorm, $normFromPhoneJid): string {
+            foreach ($candidates as $jid) {
+                if (!$isPhoneJid($jid)) {
+                    continue;
+                }
+                if ($instancePhoneNorm !== null && $instancePhoneNorm !== '') {
+                    $n = $normFromPhoneJid($jid);
+                    if ($n !== '' && $n === $instancePhoneNorm) {
+                        continue;
+                    }
+                }
+
+                return $jid;
+            }
+
+            return '';
         };
 
         if ($remoteJid !== '' && str_ends_with($remoteJid, '@g.us')) {
@@ -298,25 +335,19 @@ class WebhookProcessor
             ];
         }
 
-        $jidForDigits = '';
-        if ($isPhoneJid($remoteJid)) {
-            $jidForDigits = $remoteJid;
-        } elseif ($isPhoneJid($remoteJidAlt)) {
-            $jidForDigits = $remoteJidAlt;
-        } elseif ($isPhoneJid($participant)) {
-            $jidForDigits = $participant;
-        } elseif ($isPhoneJid($senderJid)) {
-            $jidForDigits = $senderJid;
-        } elseif ($remoteJidAlt !== '') {
-            $jidForDigits = $remoteJidAlt;
-        } elseif ($remoteJid !== '') {
-            $jidForDigits = $remoteJid;
-        } elseif ($participant !== '') {
-            $jidForDigits = $participant;
-        } else {
-            App::log('[WebhookProcessor] resolveContact: sem JID');
+        $jidForDigits = $pickPhonePeer($remoteJid, $remoteJidAlt, $participant);
+        if ($jidForDigits === '') {
+            if ($remoteJidAlt !== '') {
+                $jidForDigits = $remoteJidAlt;
+            } elseif ($remoteJid !== '') {
+                $jidForDigits = $remoteJid;
+            } elseif ($participant !== '') {
+                $jidForDigits = $participant;
+            } else {
+                App::log('[WebhookProcessor] resolveContact: sem JID');
 
-            return null;
+                return null;
+            }
         }
 
         $localPart = explode('@', $jidForDigits)[0] ?? '';
@@ -335,6 +366,18 @@ class WebhookProcessor
 
         $normalized = PhoneHelper::normalize($digits) ?: $digits;
 
+        if ($instancePhoneNorm !== null && $instancePhoneNorm !== '' && $normalized === $instancePhoneNorm) {
+            App::log('[WebhookProcessor] resolveContact: peer igual ao telefone da instancia, ignorando inbound');
+            // #region agent log
+            DebugAgentLog::write('H2', 'WebhookProcessor.php:resolveContactFromKey', 'rejected peer equals instance', [
+                'norm_len' => strlen($normalized),
+                'remote_jid' => DebugAgentLog::maskRecipient($remoteJid),
+            ]);
+            // #endregion
+
+            return null;
+        }
+
         return [
             'digits' => $digits,
             'normalized' => $normalized,
@@ -342,7 +385,6 @@ class WebhookProcessor
             'wa_meta' => [
                 'wa_remote_jid' => $remoteJid !== '' ? $remoteJid : null,
                 'wa_remote_jid_alt' => $remoteJidAlt !== '' ? $remoteJidAlt : null,
-                'wa_sender_jid' => $senderJid !== '' ? $senderJid : null,
                 'wa_last_send_number' => $digits,
                 'wa_is_group' => false,
             ],

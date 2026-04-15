@@ -217,11 +217,6 @@ class ChatService
     {
         $meta = $this->conversationMetadata($conv);
 
-        $senderJid = (string) ($meta['wa_sender_jid'] ?? '');
-        if ($senderJid !== '' && str_contains($senderJid, '@')) {
-            return $senderJid;
-        }
-
         $remoteJid = (string) ($meta['wa_remote_jid'] ?? '');
         if ($remoteJid !== '' && str_ends_with($remoteJid, '@g.us')) {
             return $remoteJid;
