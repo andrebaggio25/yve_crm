@@ -65,17 +65,22 @@ class WhatsAppInstanceController
     public function apiList(Request $request, Response $response): void
     {
         try {
+            $tid = \App\Core\TenantContext::getEffectiveTenantId();
+            App::log("[WhatsApp] apiList - Tenant ID: {$tid}");
+
             $rows = TenantAwareDatabase::fetchAll(
                 'SELECT id, name, instance_name, status, phone_number, phone_connected, webhook_token, created_at, updated_at FROM whatsapp_instances WHERE tenant_id = :tenant_id ORDER BY id ASC',
                 TenantAwareDatabase::mergeTenantParams()
             );
+            App::log("[WhatsApp] apiList - Instancias encontradas: " . count($rows));
 
             // Busca info do tenant para preview do nome da instancia
-            $tid = \App\Core\TenantContext::getEffectiveTenantId();
             $tenant = Database::fetch('SELECT slug FROM tenants WHERE id = :id', [':id' => $tid]);
+            App::log("[WhatsApp] apiList - Tenant slug: " . ($tenant['slug'] ?? 'null'));
 
             // Adiciona info se a integracao global esta configurada
             $global = $this->getGlobalConfig();
+            App::log("[WhatsApp] apiList - Global config: enabled=" . ($global['enabled'] ? 'true' : 'false') . ", url=" . ($global['api_url'] ? 'set' : 'empty') . ", key=" . ($global['api_key'] ? 'set' : 'empty'));
 
             $response->jsonSuccess([
                 'instances' => $rows,
@@ -86,7 +91,7 @@ class WhatsAppInstanceController
                 'tenant_slug' => $tenant['slug'] ?? ('tenant' . $tid),
             ]);
         } catch (\Throwable $e) {
-            App::logError('WA list', $e);
+            App::logError('[WhatsApp] apiList erro: ' . $e->getMessage(), $e);
             $response->jsonError('Erro ao listar', 500);
         }
     }
@@ -97,30 +102,40 @@ class WhatsAppInstanceController
      */
     public function apiCreate(Request $request, Response $response): void
     {
+        App::log('[WhatsApp] apiCreate - Iniciando criacao de instancia');
+        
         // Busca configuracoes globais
         $global = $this->getGlobalConfig();
+        App::log('[WhatsApp] apiCreate - Global config: enabled=' . ($global['enabled'] ? 'true' : 'false') . ', url=' . ($global['api_url'] ?: 'empty') . ', key=' . ($global['api_key'] ? 'set' : 'empty'));
 
         if (!$global['enabled']) {
+            App::log('[WhatsApp] apiCreate - ERRO: Integracao desabilitada');
             $response->jsonError('Integracao WhatsApp desabilitada pelo administrador', 403);
             return;
         }
 
         if (empty($global['api_url']) || empty($global['api_key'])) {
+            App::log('[WhatsApp] apiCreate - ERRO: URL ou API Key vazios');
             $response->jsonError('Integracao WhatsApp nao configurada. Contate o administrador.', 503);
             return;
         }
 
         // Busca info do tenant atual para gerar nome unico
         $tid = \App\Core\TenantContext::getEffectiveTenantId();
+        App::log("[WhatsApp] apiCreate - Tenant ID: {$tid}");
+        
         $tenant = Database::fetch('SELECT name, slug FROM tenants WHERE id = :id', [':id' => $tid]);
         if (!$tenant) {
+            App::log('[WhatsApp] apiCreate - ERRO: Tenant nao encontrado');
             $response->jsonError('Tenant nao encontrado', 404);
             return;
         }
+        App::log("[WhatsApp] apiCreate - Tenant: name={$tenant['name']}, slug={$tenant['slug']}");
 
         // Gera nome da instancia: {slug}-yve ou tenant{id}-yve se slug vazio
         $baseName = !empty($tenant['slug']) ? $tenant['slug'] : 'tenant' . $tid;
         $instanceName = $baseName . '-yve';
+        App::log("[WhatsApp] apiCreate - Nome da instancia: {$instanceName}");
 
         // Verifica se ja existe instancia para este tenant
         $existing = TenantAwareDatabase::fetch(
@@ -128,14 +143,17 @@ class WhatsAppInstanceController
             TenantAwareDatabase::mergeTenantParams()
         );
         if ($existing) {
+            App::log("[WhatsApp] apiCreate - ERRO: Ja existe instancia para tenant {$tid}");
             $response->jsonError('Ja existe uma instancia configurada para este tenant.', 422);
             return;
         }
 
         try {
             $token = bin2hex(random_bytes(16));
+            App::log("[WhatsApp] apiCreate - Token gerado: {$token}");
 
             // Criar instancia no banco local primeiro
+            App::log('[WhatsApp] apiCreate - Criando instancia no banco local...');
             $id = TenantAwareDatabase::insert('whatsapp_instances', [
                 'name' => $tenant['name'] ?? 'Principal',
                 'instance_name' => $instanceName,
@@ -145,6 +163,7 @@ class WhatsAppInstanceController
                 'phone_connected' => false,
                 'webhook_token' => $token,
             ]);
+            App::log("[WhatsApp] apiCreate - Instancia criada no banco local, ID: {$id}");
 
             // Construir URL do webhook
             $webhookUrl = '';
@@ -152,10 +171,13 @@ class WhatsAppInstanceController
                 $scheme = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https' : 'http';
                 $webhookUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . '/webhook/evolution/' . $token;
             }
+            App::log("[WhatsApp] apiCreate - Webhook URL: {$webhookUrl}");
 
             // Criar instancia na Evolution API
+            App::log('[WhatsApp] apiCreate - Chamando Evolution API para criar instancia...');
             $evo = new EvolutionApiService();
             $createRes = $evo->createInstance($global['api_url'], $global['api_key'], $instanceName, $webhookUrl);
+            App::log('[WhatsApp] apiCreate - Resposta da Evolution: ' . json_encode($createRes));
 
             if (!$createRes['ok']) {
                 // Se falhou na Evolution, remover do banco local (rollback)

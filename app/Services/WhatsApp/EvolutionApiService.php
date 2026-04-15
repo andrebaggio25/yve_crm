@@ -97,8 +97,12 @@ class EvolutionApiService
      */
     private function request(string $method, string $url, string $apiKey, ?string $jsonBody): array
     {
+        App::log("[EvolutionAPI] Request: {$method} {$url}");
+        App::log("[EvolutionAPI] Payload: " . ($jsonBody ?: 'null'));
+        
         $ch = curl_init($url);
         if ($ch === false) {
+            App::log('[EvolutionAPI] ERRO: curl_init falhou');
             return ['ok' => false, 'http' => 0, 'body' => null, 'raw' => 'curl_init failed'];
         }
 
@@ -126,14 +130,18 @@ class EvolutionApiService
         $err = curl_error($ch);
         curl_close($ch);
 
-        if ($err !== '') {
-            App::logError('EvolutionApiService curl', new \RuntimeException($err));
+        App::log("[EvolutionAPI] Response HTTP: {$http}");
+        App::log("[EvolutionAPI] Response raw: " . substr($raw, 0, 500));
 
+        if ($err !== '') {
+            App::logError("[EvolutionAPI] Curl error: {$err}");
             return ['ok' => false, 'http' => $http, 'body' => null, 'raw' => $raw];
         }
 
         $body = json_decode($raw, true);
+        $ok = $http >= 200 && $http < 300;
+        App::log("[EvolutionAPI] Result: ok=" . ($ok ? 'true' : 'false'));
 
-        return ['ok' => $http >= 200 && $http < 300, 'http' => $http, 'body' => $body, 'raw' => $raw];
+        return ['ok' => $ok, 'http' => $http, 'body' => $body, 'raw' => $raw];
     }
 }

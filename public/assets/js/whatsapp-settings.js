@@ -12,6 +12,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Botao Ativar WhatsApp (cria instancia automaticamente)
     document.getElementById('btn-activate')?.addEventListener('click', async () => {
+        console.log('[WhatsApp] Botao Ativar clicado');
         const btn = document.getElementById('btn-activate');
         const feedback = document.getElementById('activate-feedback');
 
@@ -22,7 +23,10 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         try {
+            console.log('[WhatsApp] Chamando POST /api/settings/whatsapp/instances...');
             const r = await API.post('/api/settings/whatsapp/instances', {});
+            console.log('[WhatsApp] Resposta da criacao:', r);
+            
             if (feedback) {
                 feedback.textContent = r.message || 'WhatsApp ativado!';
                 feedback.className = 'text-sm text-green-700';
@@ -30,6 +34,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             loadWhatsAppStatus();
         } catch (err) {
+            console.error('[WhatsApp] Erro ao ativar:', err);
             if (feedback) {
                 feedback.textContent = err.message || 'Erro ao ativar';
                 feedback.className = 'text-sm text-red-700';
@@ -69,12 +74,21 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 async function loadWhatsAppStatus() {
+    console.log('[WhatsApp] Iniciando loadWhatsAppStatus...');
     try {
+        console.log('[WhatsApp] Buscando instancias...');
         const r = await API.get('/api/settings/whatsapp/instances');
+        console.log('[WhatsApp] Resposta da API:', r);
+        
         const data = r.data || {};
         const global = data.global || {};
         const instances = data.instances || [];
         const instance = instances[0];
+
+        console.log('[WhatsApp] Configuracao global:', global);
+        console.log('[WhatsApp] Instancias encontradas:', instances.length);
+        console.log('[WhatsApp] Primeira instancia:', instance);
+        console.log('[WhatsApp] Tenant slug:', data.tenant_slug);
 
         updateGlobalStatus(global, instance);
 
