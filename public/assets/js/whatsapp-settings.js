@@ -89,6 +89,7 @@ async function loadWhatsAppStatus() {
         console.log('[WhatsApp] Instancias encontradas:', instances.length);
         console.log('[WhatsApp] Primeira instancia:', instance);
         console.log('[WhatsApp] Tenant slug:', data.tenant_slug);
+        console.log('[WhatsApp] Verificando global.enabled:', global.enabled, 'global.configured:', global.configured);
 
         updateGlobalStatus(global, instance);
 
@@ -99,20 +100,23 @@ async function loadWhatsAppStatus() {
         }
 
         if (!global.enabled || !global.configured) {
+            console.log('[WhatsApp] Retornando - global nao habilitado ou configurado');
             document.getElementById('connection-card')?.classList.add('hidden');
             document.getElementById('activate-card')?.classList.add('hidden');
             document.getElementById('webhook-info')?.classList.add('hidden');
             return;
         }
 
+        console.log('[WhatsApp] Verificando instance:', instance, '!!instance:', !!instance);
         if (!instance) {
-            // Mostra card de ativacao
+            console.log('[WhatsApp] Retornando - sem instancia');
             document.getElementById('connection-card')?.classList.add('hidden');
             document.getElementById('activate-card')?.classList.remove('hidden');
             document.getElementById('webhook-info')?.classList.add('hidden');
             return;
         }
 
+        console.log('[WhatsApp] Passou verificacoes, mostrando cards...');
         // Tem instancia - mostra card de conexao
         console.log('[WhatsApp] Mostrando cards de conexao...');
         document.getElementById('activate-card')?.classList.add('hidden');
