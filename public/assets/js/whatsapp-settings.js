@@ -10,6 +10,36 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('btn-connect')?.addEventListener('click', showQrCode);
     document.getElementById('btn-new-qr')?.addEventListener('click', showQrCode);
 
+    // Botao Ativar WhatsApp (cria instancia automaticamente)
+    document.getElementById('btn-activate')?.addEventListener('click', async () => {
+        const btn = document.getElementById('btn-activate');
+        const feedback = document.getElementById('activate-feedback');
+
+        btn.disabled = true;
+        btn.textContent = 'Ativando...';
+        if (feedback) {
+            feedback.className = 'hidden text-sm';
+        }
+
+        try {
+            const r = await API.post('/api/settings/whatsapp/instances', {});
+            if (feedback) {
+                feedback.textContent = r.message || 'WhatsApp ativado!';
+                feedback.className = 'text-sm text-green-700';
+                feedback.classList.remove('hidden');
+            }
+            loadWhatsAppStatus();
+        } catch (err) {
+            if (feedback) {
+                feedback.textContent = err.message || 'Erro ao ativar';
+                feedback.className = 'text-sm text-red-700';
+                feedback.classList.remove('hidden');
+            }
+            btn.disabled = false;
+            btn.textContent = 'Ativar WhatsApp';
+        }
+    });
+
     document.getElementById('btn-disconnect')?.addEventListener('click', async () => {
         if (!confirm('Deseja realmente desconectar este numero? Voce precisara escanear o QR Code novamente para reconectar.')) {
             return;
@@ -36,36 +66,6 @@ document.addEventListener('DOMContentLoaded', function() {
             btn.textContent = 'Desconectar';
         }
     });
-
-    // Create form
-    document.getElementById('wa-form')?.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const btn = e.target.querySelector('button[type="submit"]');
-        const feedback = document.getElementById('form-feedback');
-
-        btn.disabled = true;
-        btn.textContent = 'Criando...';
-        feedback.className = 'hidden text-sm font-medium';
-
-        const body = {
-            instance_name: e.target.instance_name.value,
-            name: e.target.name.value || 'Principal'
-        };
-
-        try {
-            await API.post('/api/settings/whatsapp/instances', body);
-            feedback.textContent = 'Instancia criada!';
-            feedback.className = 'text-sm font-medium text-green-700';
-            loadWhatsAppStatus();
-        } catch (err) {
-            feedback.textContent = err.message || 'Erro ao criar';
-            feedback.className = 'text-sm font-medium text-red-700';
-        } finally {
-            btn.disabled = false;
-            btn.textContent = 'Criar Instancia';
-            feedback.classList.remove('hidden');
-        }
-    });
 });
 
 async function loadWhatsAppStatus() {
@@ -78,23 +78,35 @@ async function loadWhatsAppStatus() {
 
         updateGlobalStatus(global, instance);
 
+        // Atualiza preview do nome da instancia
+        if (data.tenant_slug) {
+            const previewEl = document.getElementById('instance-name-preview');
+            if (previewEl) previewEl.textContent = data.tenant_slug + '-yve';
+        }
+
         if (!global.enabled || !global.configured) {
             document.getElementById('connection-card')?.classList.add('hidden');
-            document.getElementById('create-form')?.classList.add('hidden');
+            document.getElementById('activate-card')?.classList.add('hidden');
             document.getElementById('webhook-info')?.classList.add('hidden');
             return;
         }
 
         if (!instance) {
+            // Mostra card de ativacao
             document.getElementById('connection-card')?.classList.add('hidden');
-            document.getElementById('create-form')?.classList.remove('hidden');
+            document.getElementById('activate-card')?.classList.remove('hidden');
             document.getElementById('webhook-info')?.classList.add('hidden');
             return;
         }
 
-        document.getElementById('create-form')?.classList.add('hidden');
+        // Tem instancia - mostra card de conexao
+        document.getElementById('activate-card')?.classList.add('hidden');
         document.getElementById('connection-card')?.classList.remove('hidden');
         document.getElementById('webhook-info')?.classList.remove('hidden');
+
+        // Mostra nome da instancia
+        const instanceNameEl = document.getElementById('instance-name');
+        if (instanceNameEl) instanceNameEl.textContent = instance.instance_name;
 
         if (instance.webhook_token) {
             const host = window.location.host;
