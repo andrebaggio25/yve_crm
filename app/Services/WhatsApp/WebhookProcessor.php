@@ -15,14 +15,21 @@ class WebhookProcessor
     public function handle(array $payload, int $tenantId, int $whatsappInstanceId): void
     {
         $event = (string) ($payload['event'] ?? '');
+        $eventLower = strtolower($event);
+        App::log("[WebhookProcessor] handle tenant={$tenantId} wa_instance={$whatsappInstanceId} event=" . ($event !== '' ? $event : '(vazio)'));
 
-        if (str_contains(strtolower($event), 'connection')) {
+        if (str_contains($eventLower, 'connection')) {
+            App::log('[WebhookProcessor] -> handleConnection');
             $this->handleConnection($payload, $tenantId, $whatsappInstanceId);
 
             return;
         }
 
-        if (str_contains(strtolower($event), 'messages') || isset($payload['data']['messages'])) {
+        $data = $payload['data'] ?? null;
+        $looksLikeMessage = is_array($data) && isset($data['key']) && is_array($data['key']);
+
+        if (str_contains($eventLower, 'messages') || isset($payload['data']['messages']) || $looksLikeMessage) {
+            App::log('[WebhookProcessor] -> handleMessages (looksLikeMessage=' . ($looksLikeMessage ? '1' : '0') . ')');
             $this->handleMessages($payload, $tenantId, $whatsappInstanceId, $event);
 
             return;
@@ -30,9 +37,14 @@ class WebhookProcessor
 
         // Payload alternativo: array direto de mensagens
         if (isset($payload['messages']) && is_array($payload['messages'])) {
+            App::log('[WebhookProcessor] -> handleMessages (payload.messages raiz)');
             $wrapped = ['data' => ['messages' => $payload['messages']]];
             $this->handleMessages($wrapped, $tenantId, $whatsappInstanceId, $event);
+
+            return;
         }
+
+        App::log('[WebhookProcessor] AVISO: payload nao reconhecido (sem connection/messages/key)');
     }
 
     private function handleConnection(array $payload, int $tenantId, int $whatsappInstanceId): void
@@ -53,15 +65,36 @@ class WebhookProcessor
     private function handleMessages(array $payload, int $tenantId, int $whatsappInstanceId, string $event = ''): void
     {
         $data = $payload['data'] ?? $payload;
-        $messages = $data['messages'] ?? ($data['message'] ?? null);
-        if ($messages === null && isset($data[0])) {
-            $messages = $data;
-        }
-        if (!is_array($messages)) {
+        if (!is_array($data)) {
+            App::log('[WebhookProcessor] handleMessages: data nao e array, ignorando');
+
             return;
         }
-        if (isset($messages['key'])) {
-            $messages = [$messages];
+
+        // Evolution API v2: uma mensagem vem em data com key + pushName + message (conteudo Baileys) no mesmo objeto.
+        // NAO usar data['message'] aqui — isso e o bloco interno {conversation: "..."}, nao o envelope completo.
+        if (isset($data['key']) && is_array($data['key'])) {
+            $messages = [$data];
+            App::log('[WebhookProcessor] handleMessages: formato v2 (data.key), 1 mensagem');
+        } else {
+            $messages = $data['messages'] ?? null;
+            if ($messages === null && isset($data[0])) {
+                $messages = $data;
+            }
+            if ($messages === null) {
+                App::log('[WebhookProcessor] handleMessages: nenhuma lista de mensagens encontrada');
+
+                return;
+            }
+            if (!is_array($messages)) {
+                App::log('[WebhookProcessor] handleMessages: messages nao e array');
+
+                return;
+            }
+            if (isset($messages['key'])) {
+                $messages = [$messages];
+            }
+            App::log('[WebhookProcessor] handleMessages: formato legado/array, count=' . count($messages));
         }
 
         foreach ($messages as $msg) {
@@ -77,6 +110,8 @@ class WebhookProcessor
         $key = $msg['key'] ?? [];
         $fromMe = !empty($key['fromMe']);
         if ($fromMe) {
+            App::log('[WebhookProcessor] processOneMessage: ignorando fromMe=true');
+
             return;
         }
 
@@ -84,10 +119,13 @@ class WebhookProcessor
         $digits = preg_replace('/\D/', '', explode('@', $remote)[0] ?? '') ?? '';
 
         if ($digits === '') {
+            App::log('[WebhookProcessor] processOneMessage: remoteJid vazio, ignorando');
+
             return;
         }
 
         $normalized = PhoneHelper::normalize($digits) ?: $digits;
+        App::log("[WebhookProcessor] processOneMessage: phone={$normalized} event={$eventName}");
 
         $messageBlock = $msg['message'] ?? [];
         $text = '';
@@ -174,6 +212,7 @@ class WebhookProcessor
             );
             $convId = (int) Database::getInstance()->lastInsertId();
             $unread = 1;
+            App::log("[WebhookProcessor] conversa criada id={$convId} lead_id=" . ($leadId ?? 'null'));
         } else {
             $convId = (int) $conv['id'];
             $unread = (int) $conv['unread_count'] + 1;
@@ -188,6 +227,7 @@ class WebhookProcessor
                     ':push' => $pushName ?: null,
                 ]
             );
+            App::log("[WebhookProcessor] conversa atualizada id={$convId} unread={$unread}");
         }
 
         Database::query(
@@ -205,6 +245,8 @@ class WebhookProcessor
                 ':meta' => json_encode(['raw_event' => $eventName ?: 'messages'], JSON_UNESCAPED_UNICODE),
             ]
         );
+
+        App::log("[WebhookProcessor] mensagem inbound gravada conv={$convId} type={$type} lead_id=" . ($leadId ?? 'null'));
 
         try {
             AutomationEngine::dispatch($tenantId, 'whatsapp_message_received', [

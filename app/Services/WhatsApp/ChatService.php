@@ -85,10 +85,11 @@ class ChatService
             return ['ok' => false, 'message' => 'Mensagem vazia'];
         }
 
+        $tid = (int) TenantContext::getEffectiveTenantId();
         $conv = TenantAwareDatabase::fetch(
             'SELECT c.*, w.api_url, w.api_key, w.instance_name 
              FROM conversations c
-             JOIN whatsapp_instances w ON w.id = c.whatsapp_instance_id AND w.tenant_id = :tenant_id
+             JOIN whatsapp_instances w ON w.id = c.whatsapp_instance_id AND w.tenant_id = ' . $tid . '
              WHERE c.id = :cid AND c.tenant_id = :tenant_id',
             TenantAwareDatabase::mergeTenantParams([':cid' => $conversationId])
         );

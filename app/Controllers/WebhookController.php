@@ -2,6 +2,7 @@
 
 namespace App\Controllers;
 
+use App\Core\App;
 use App\Core\Database;
 use App\Core\Request;
 use App\Core\Response;
@@ -35,12 +36,18 @@ class WebhookController
             $payload = [];
         }
 
+        $event = (string) ($payload['event'] ?? '');
+        $rawLog = mb_substr($raw, 0, 2000);
+        App::log('[Webhook] POST evolution token=*** inst_id=' . (int) $inst['id'] . ' tenant_id=' . (int) $inst['tenant_id'] . ' event=' . ($event !== '' ? $event : '(vazio)') . ' raw_len=' . strlen($raw));
+        App::log('[Webhook] raw_preview=' . $rawLog);
+
         try {
             (new WebhookProcessor())->handle($payload, (int) $inst['tenant_id'], (int) $inst['id']);
+            App::log('[Webhook] processamento concluido sem excecao');
             $response->jsonSuccess([], 'OK');
         } catch (\Throwable $e) {
             // Logar erro para debug mas responder 200 para nao fazer a Evolution reenviar
-            \App\Core\App::logError('Webhook processing failed: ' . $e->getMessage(), $e);
+            App::logError('Webhook processing failed: ' . $e->getMessage(), $e);
             $response->jsonSuccess(['processed' => false, 'error' => 'Processing failed but acknowledged'], 'OK');
         }
     }
