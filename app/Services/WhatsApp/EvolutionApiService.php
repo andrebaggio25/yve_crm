@@ -108,6 +108,31 @@ class EvolutionApiService
     }
 
     /**
+     * Configura webhook para uma instancia.
+     * @return array{ok:bool,http:int,body:mixed,raw:string}
+     */
+    public function setWebhook(string $baseUrl, string $apiKey, string $instanceName, string $webhookUrl): array
+    {
+        $baseUrl = rtrim($baseUrl, '/');
+        $url = $baseUrl . '/webhook/set/' . rawurlencode($instanceName);
+
+        $data = [
+            'webhook' => [
+                'enabled' => true,
+                'url' => $webhookUrl,
+                'events' => ['MESSAGES_UPSERT', 'CONNECTION_UPDATE'],
+            ],
+        ];
+
+        $payload = json_encode($data, JSON_UNESCAPED_UNICODE);
+        if (class_exists('App\Core\App')) {
+            App::log("[EvolutionAPI] setWebhook payload: " . $payload);
+        }
+
+        return $this->request('POST', $url, $apiKey, $payload);
+    }
+
+    /**
      * @return array{ok:bool,http:int,body:mixed,raw:string}
      */
     private function request(string $method, string $url, string $apiKey, ?string $jsonBody): array

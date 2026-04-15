@@ -223,6 +223,18 @@ class WhatsAppInstanceController
                 TenantAwareDatabase::mergeTenantParams([':id' => $id])
             );
 
+            // Configurar webhook na Evolution API
+            if (!empty($webhookUrl)) {
+                App::log("[WhatsApp] apiCreate - Configurando webhook: {$webhookUrl}");
+                $webhookRes = $evo->setWebhook($global['api_url'], $global['api_key'], $instanceName, $webhookUrl);
+                App::log('[WhatsApp] apiCreate - Resposta setWebhook: ' . json_encode($webhookRes));
+                
+                if (!$webhookRes['ok']) {
+                    App::logError("[WhatsApp] apiCreate - Falha ao configurar webhook: HTTP {$webhookRes['http']}");
+                    // Nao falha a criacao, apenas loga o erro
+                }
+            }
+
             App::log("Instancia WhatsApp '{$instanceName}' criada para tenant {$tid}");
 
             $response->jsonSuccess([
