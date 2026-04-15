@@ -3,6 +3,7 @@
 namespace App\Services\WhatsApp;
 
 use App\Core\App;
+use App\Helpers\DebugAgentLog;
 use App\Core\Session;
 use App\Core\TenantContext;
 use App\Core\TenantAwareDatabase;
@@ -108,6 +109,15 @@ class ChatService
 
         App::log('[Chat] sendText conv=' . $conversationId . ' number_len=' . strlen($numberForEvolution));
 
+        // #region agent log
+        DebugAgentLog::write('H3_H4', 'ChatService::sendText', 'pre Evolution sendText', [
+            'conversation_id' => $conversationId,
+            'recipient' => DebugAgentLog::maskRecipient($numberForEvolution),
+            'instance_name_len' => strlen((string) ($conv['instance_name'] ?? '')),
+            'api_url_host_len' => strlen(parse_url((string) ($conv['api_url'] ?? ''), PHP_URL_HOST) ?: ''),
+        ]);
+        // #endregion agent log
+
         $mid = TenantAwareDatabase::insert('messages', [
             'conversation_id' => $conversationId,
             'whatsapp_message_id' => null,
@@ -133,6 +143,11 @@ class ChatService
             $alt = (string) ($meta['wa_remote_jid_alt'] ?? '');
             if ($alt !== '' && str_contains($alt, '@')) {
                 App::log('[Chat] sendText retentativa com JID completo');
+                // #region agent log
+                DebugAgentLog::write('H3_H5', 'ChatService::sendText', 'retry sendText with full JID', [
+                    'recipient' => DebugAgentLog::maskRecipient($alt),
+                ]);
+                // #endregion agent log
                 $res = $evo->sendText(
                     (string) $conv['api_url'],
                     (string) $conv['api_key'],
@@ -142,6 +157,13 @@ class ChatService
                 );
             }
         }
+
+        // #region agent log
+        DebugAgentLog::write('H1_H2_H5', 'ChatService::sendText', 'final sendText result', [
+            'crm_marks_sent' => $res['ok'],
+            'http' => $res['http'] ?? null,
+        ]);
+        // #endregion agent log
 
         if ($res['ok']) {
             TenantAwareDatabase::update(

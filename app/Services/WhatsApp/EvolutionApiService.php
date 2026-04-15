@@ -3,6 +3,7 @@
 namespace App\Services\WhatsApp;
 
 use App\Core\App;
+use App\Helpers\DebugAgentLog;
 
 /**
  * Cliente HTTP para Evolution API.
@@ -234,6 +235,31 @@ class EvolutionApiService
         if (class_exists('App\Core\App')) {
             App::log("[EvolutionAPI] Result: ok=" . ($ok ? 'true' : 'false'));
         }
+
+        // #region agent log
+        if (str_contains($url, '/message/sendText/')) {
+            $status = null;
+            $errField = null;
+            $msgField = null;
+            $hasKey = false;
+            if (is_array($body)) {
+                $status = $body['status'] ?? null;
+                $errField = $body['error'] ?? null;
+                $msgField = $body['message'] ?? null;
+                $hasKey = isset($body['key']);
+            }
+            DebugAgentLog::write('H1_H2_H4_H5', 'EvolutionApiService::request', 'sendText HTTP response', [
+                'http' => $http,
+                'http_ok' => $ok,
+                'json_is_array' => is_array($body),
+                'body_status' => is_string($status) ? $status : (is_scalar($status) ? (string) $status : null),
+                'body_error_scalar' => is_scalar($errField) ? (string) $errField : null,
+                'body_message_scalar' => is_scalar($msgField) ? (string) $msgField : null,
+                'body_has_key' => $hasKey,
+                'raw_len' => strlen($raw),
+            ]);
+        }
+        // #endregion agent log
 
         return ['ok' => $ok, 'http' => $http, 'body' => $body, 'raw' => $raw];
     }
