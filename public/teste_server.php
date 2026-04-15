@@ -187,6 +187,23 @@ try {
     echo "OK: " . ($result['ok'] ? 'Sim' : 'Nao') . "\n";
     echo "Body: " . json_encode($result['body'], JSON_PRETTY_PRINT) . "\n";
     
+    // Teste 6: Verificar estado da conexao da instancia higicorp-yve
+    echo "\n=== Teste 6: Verificar estado da conexao (higicorp-yve) ===\n";
+    $instanceName = 'higicorp-yve';
+    $connRes = $evo->getConnectionState($apiUrl, $apiKey, $instanceName);
+    echo "URL chamada: {$apiUrl}/instance/connectionState/{$instanceName}\n";
+    echo "HTTP: " . $connRes['http'] . "\n";
+    echo "OK: " . ($connRes['ok'] ? 'Sim' : 'Nao') . "\n";
+    echo "Body completo: " . json_encode($connRes['body'], JSON_PRETTY_PRINT) . "\n";
+    
+    // Teste 7: Verificar info da instancia
+    echo "\n=== Teste 7: Verificar info da instancia (higicorp-yve) ===\n";
+    $infoRes = $evo->getInstanceInfo($apiUrl, $apiKey, $instanceName);
+    echo "URL chamada: {$apiUrl}/instance/fetchInstances?instanceName={$instanceName}\n";
+    echo "HTTP: " . $infoRes['http'] . "\n";
+    echo "OK: " . ($infoRes['ok'] ? 'Sim' : 'Nao') . "\n";
+    echo "Body: " . json_encode($infoRes['body'], JSON_PRETTY_PRINT) . "\n";
+    
 } catch (Exception $e) {
     echo "\n❌ ERRO: " . $e->getMessage() . "\n";
     echo "Arquivo: " . $e->getFile() . "\n";
