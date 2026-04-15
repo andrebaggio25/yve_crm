@@ -146,7 +146,7 @@ class WebhookProcessor
         // #endregion
 
         $instRow = Database::fetch(
-            'SELECT phone_number FROM whatsapp_instances WHERE id = :wid AND tenant_id = :tid LIMIT 1',
+            'SELECT phone_number, api_url, api_key, instance_name FROM whatsapp_instances WHERE id = :wid AND tenant_id = :tid LIMIT 1',
             [':wid' => $whatsappInstanceId, ':tid' => $tenantId]
         );
         $instancePhoneNorm = PhoneHelper::normalize((string) ($instRow['phone_number'] ?? ''));
@@ -154,6 +154,58 @@ class WebhookProcessor
         $resolved = $this->resolveContactFromKey($key, $instancePhoneNorm !== '' ? $instancePhoneNorm : null);
         if ($resolved === null) {
             return;
+        }
+
+        // Tenta resolver LID → telefone via Evolution API (contacts lookup)
+        if (!empty($resolved['lid_only'])) {
+            $apiUrl  = (string) ($instRow['api_url']      ?? '');
+            $apiKey  = (string) ($instRow['api_key']      ?? '');
+            $instNm  = (string) ($instRow['instance_name'] ?? '');
+            $lidJid  = (string) ($resolved['wa_meta']['wa_remote_jid'] ?? '');
+
+            if ($apiUrl !== '' && $apiKey !== '' && $lidJid !== '') {
+                $evo = new EvolutionApiService();
+                $contactRes = $evo->fetchContactByJid($apiUrl, $apiKey, $instNm, $lidJid);
+
+                // #region agent log
+                DebugAgentLog::write('FETCH_CONTACT', 'WebhookProcessor::processOneMessage', 'fetchContactByJid LID', [
+                    'http'         => $contactRes['http'],
+                    'ok'           => $contactRes['ok'],
+                    'raw_preview'  => mb_substr((string) ($contactRes['raw'] ?? ''), 0, 600),
+                    'body_is_arr'  => is_array($contactRes['body']),
+                    'body_keys'    => is_array($contactRes['body']) ? array_keys($contactRes['body']) : null,
+                    'lid_jid'      => DebugAgentLog::maskRecipient($lidJid),
+                ]);
+                // #endregion
+
+                $phoneJid = EvolutionApiService::extractPhoneJidFromContacts($contactRes['body']);
+                if ($phoneJid !== '') {
+                    $localPart  = explode('@', $phoneJid)[0] ?? '';
+                    $realDigits = preg_replace('/\D/', '', $localPart) ?: $localPart;
+                    $realNorm   = PhoneHelper::normalize($realDigits) ?: $realDigits;
+
+                    // #region agent log
+                    DebugAgentLog::write('FETCH_CONTACT_RESOLVED', 'WebhookProcessor::processOneMessage', 'LID resolvido para telefone', [
+                        'phone_jid' => DebugAgentLog::maskRecipient($phoneJid),
+                        'norm_len'  => strlen($realNorm),
+                    ]);
+                    // #endregion
+
+                    $resolved['digits']                          = $realDigits;
+                    $resolved['normalized']                      = $realNorm;
+                    $resolved['lid_only']                        = false;
+                    $resolved['wa_meta']['wa_remote_jid_alt']    = $phoneJid;
+                    $resolved['wa_meta']['wa_last_send_number']  = $realDigits;
+                    unset($resolved['wa_meta']['wa_lid_only']);
+                } else {
+                    // #region agent log
+                    DebugAgentLog::write('FETCH_CONTACT_NO_PHONE', 'WebhookProcessor::processOneMessage', 'sem telefone no contato LID', [
+                        'http'      => $contactRes['http'],
+                        'lid_jid'   => DebugAgentLog::maskRecipient($lidJid),
+                    ]);
+                    // #endregion
+                }
+            }
         }
 
         $digits = $resolved['digits'];

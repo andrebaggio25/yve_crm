@@ -107,6 +107,45 @@ class ChatService
             return ['ok' => false, 'message' => 'Telefone invalido'];
         }
 
+        // Se o número é um @lid, tenta resolver para telefone real via contacts API
+        if (str_ends_with($numberForEvolution, '@lid')) {
+            $evo        = new EvolutionApiService();
+            $contactRes = $evo->fetchContactByJid(
+                (string) $conv['api_url'],
+                (string) $conv['api_key'],
+                (string) $conv['instance_name'],
+                $numberForEvolution
+            );
+
+            // #region agent log
+            DebugAgentLog::write('SEND_LID_LOOKUP', 'ChatService::sendText', 'fetchContactByJid para LID ao enviar', [
+                'http'        => $contactRes['http'],
+                'ok'          => $contactRes['ok'],
+                'raw_preview' => mb_substr((string) ($contactRes['raw'] ?? ''), 0, 500),
+                'lid_num'     => DebugAgentLog::maskRecipient($numberForEvolution),
+            ]);
+            // #endregion
+
+            $phoneJid = EvolutionApiService::extractPhoneJidFromContacts($contactRes['body']);
+            if ($phoneJid !== '') {
+                $localPart          = explode('@', $phoneJid)[0] ?? '';
+                $numberForEvolution = preg_replace('/\D/', '', $localPart) ?: $phoneJid;
+                // #region agent log
+                DebugAgentLog::write('SEND_LID_RESOLVED', 'ChatService::sendText', 'LID resolvido para numero real ao enviar', [
+                    'phone_jid'  => DebugAgentLog::maskRecipient($phoneJid),
+                    'num_len'    => strlen($numberForEvolution),
+                ]);
+                // #endregion
+            } else {
+                // #region agent log
+                DebugAgentLog::write('SEND_LID_UNRESOLVED', 'ChatService::sendText', 'LID sem telefone no contato — tentando enviar com JID lid diretamente', [
+                    'lid_num' => DebugAgentLog::maskRecipient($numberForEvolution),
+                ]);
+                // #endregion
+                // Mantém numberForEvolution com @lid para tentar mesmo assim (Evolution pode rotear)
+            }
+        }
+
         App::log('[Chat] sendText conv=' . $conversationId . ' number_len=' . strlen($numberForEvolution));
 
         // #region agent log

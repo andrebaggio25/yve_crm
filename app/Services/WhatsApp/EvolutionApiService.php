@@ -141,6 +141,48 @@ class EvolutionApiService
     }
 
     /**
+     * Busca contato pelo JID na Evolution API.
+     * Usado para tentar resolver um @lid em JID de telefone (@s.whatsapp.net).
+     *
+     * @return array{ok:bool,http:int,body:mixed,raw:string}
+     */
+    public function fetchContactByJid(string $baseUrl, string $apiKey, string $instanceName, string $jid): array
+    {
+        $baseUrl = rtrim($baseUrl, '/');
+        $url = $baseUrl . '/contact/findContacts/' . rawurlencode($instanceName);
+        $payload = json_encode(['where' => ['id' => $jid]], JSON_UNESCAPED_UNICODE);
+
+        return $this->request('POST', $url, $apiKey, $payload);
+    }
+
+    /**
+     * Extrai o primeiro JID de telefone (@s.whatsapp.net / @c.us) de uma resposta do findContacts.
+     * Retorna string vazia se nenhum JID de telefone for encontrado.
+     *
+     * @param mixed $body corpo já decodificado da resposta
+     */
+    public static function extractPhoneJidFromContacts(mixed $body): string
+    {
+        if (!is_array($body)) {
+            return '';
+        }
+        $list = isset($body[0]) ? $body : [$body];
+        foreach ($list as $ct) {
+            if (!is_array($ct)) {
+                continue;
+            }
+            foreach (['jid', 'id', 'remoteJid', 'phone', 'number'] as $field) {
+                $val = (string) ($ct[$field] ?? '');
+                if ($val !== '' && (str_ends_with($val, '@s.whatsapp.net') || str_ends_with($val, '@c.us'))) {
+                    return $val;
+                }
+            }
+        }
+
+        return '';
+    }
+
+    /**
      * Configura webhook para uma instancia.
      * @return array{ok:bool,http:int,body:mixed,raw:string}
      */
