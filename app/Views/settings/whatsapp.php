@@ -96,14 +96,14 @@ $scripts = ['whatsapp-settings'];
         </div>
 
         <!-- Acoes -->
-        <div id="connection-actions" class="mt-4 flex flex-wrap gap-2">
-            <button type="button" id="btn-connect" class="hidden rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700">
+        <div id="connection-actions" class="mt-4 flex flex-wrap items-center gap-2">
+            <button type="button" id="btn-connect" class="hidden inline-flex items-center justify-center rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2">
                 Conectar Numero
             </button>
-            <button type="button" id="btn-disconnect" class="hidden rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-100">
+            <button type="button" id="btn-disconnect" class="hidden inline-flex items-center justify-center rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2">
                 Desconectar
             </button>
-            <button type="button" id="btn-configure-webhook" class="rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100">
+            <button type="button" id="btn-configure-webhook" class="inline-flex items-center justify-center rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700 transition hover:border-blue-300 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
                 Configurar Webhook
             </button>
         </div>
