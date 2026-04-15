@@ -13,11 +13,14 @@ class ChatController
     {
         try {
             $filter = (string) ($request->get('filter') ?? 'all');
+            App::log("[Chat] apiList - Filter: {$filter}");
             $svc = new ChatService();
-            $response->jsonSuccess(['conversations' => $svc->listConversations($filter)]);
+            $conversations = $svc->listConversations($filter);
+            App::log("[Chat] apiList - Conversas encontradas: " . count($conversations));
+            $response->jsonSuccess(['conversations' => $conversations]);
         } catch (\Throwable $e) {
-            App::logError('Chat list', $e);
-            $response->jsonError('Erro ao listar conversas', 500);
+            App::logError('[Chat] apiList erro: ' . $e->getMessage(), $e);
+            $response->jsonError('Erro ao listar conversas: ' . $e->getMessage(), 500);
         }
     }
 
