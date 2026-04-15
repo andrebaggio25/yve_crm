@@ -312,8 +312,12 @@ class WhatsAppInstanceController
 
             // Busca estado da conexao
             $stateRes = $evo->getConnectionState($row['api_url'], $row['api_key'], $row['instance_name']);
-            $state = $stateRes['body']['state'] ?? 'unknown';
-            $isConnected = in_array($state, ['open', 'connected']);
+            App::log("[WhatsApp] apiCheckStatus - Resposta connectionState: " . json_encode($stateRes));
+            
+            // Evolution API pode retornar state em diferentes formatos
+            $state = $stateRes['body']['state'] ?? $stateRes['body']['connectionStatus'] ?? 'unknown';
+            $isConnected = in_array(strtolower($state), ['open', 'connected', 'connecting']);
+            App::log("[WhatsApp] apiCheckStatus - State: {$state}, IsConnected: " . ($isConnected ? 'true' : 'false'));
 
             $phoneNumber = $row['phone_number'];
             $phoneFormatted = '';
