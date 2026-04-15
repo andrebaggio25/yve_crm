@@ -83,16 +83,21 @@ class EvolutionApiService
         $baseUrl = rtrim($baseUrl, '/');
         $url = $baseUrl . '/instance/create';
 
-        // Payload completo conforme documentacao Evolution API v2
+        // Payload base conforme documentacao Evolution API v2
         // Teste 5 comprovou que 'integration' é obrigatório
+        // Teste 1 falhou com webhook - só enviamos webhook se tiver URL válida
         $data = [
             'instanceName' => $instanceName,
             'integration' => 'WHATSAPP-BAILEYS',
             'qrcode' => true,
-            'webhook' => $webhookUrl ?? '',
-            'webhook_by_events' => !empty($webhookUrl),
-            'events' => ['MESSAGES_UPSERT', 'CONNECTION_UPDATE'],
         ];
+
+        // Só adiciona webhook se tiver URL válida (evita "Invalid url property")
+        if (!empty($webhookUrl) && filter_var($webhookUrl, FILTER_VALIDATE_URL)) {
+            $data['webhook'] = $webhookUrl;
+            $data['webhook_by_events'] = true;
+            $data['events'] = ['MESSAGES_UPSERT', 'CONNECTION_UPDATE'];
+        }
 
         $payload = json_encode($data, JSON_UNESCAPED_UNICODE);
         if (class_exists('App\Core\App')) {

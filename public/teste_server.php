@@ -64,15 +64,12 @@ try {
     echo "URL: {$apiUrl}\n";
     echo "Key: " . substr($apiKey, 0, 10) . "...\n";
     
-    // Teste 1: Endpoint /instance/create (padrão)
-    echo "\n=== Teste 1: /instance/create ===\n";
+    // Teste 1: Endpoint /instance/create (padrão) - SEM webhook (igual ao Teste 5 que funcionou)
+    echo "\n=== Teste 1: /instance/create (sem webhook) ===\n";
     $testPayload = json_encode([
         'instanceName' => 'teste-1-' . time(),
         'integration' => 'WHATSAPP-BAILEYS',
-        'qrcode' => true,
-        'webhook' => 'https://homcrm.yvebeauty.com/webhook/evolution/teste',
-        'webhook_by_events' => true,
-        'events' => ['MESSAGES_UPSERT', 'CONNECTION_UPDATE']
+        'qrcode' => true
     ]);
     
     $ch = curl_init($apiUrl . '/instance/create');
