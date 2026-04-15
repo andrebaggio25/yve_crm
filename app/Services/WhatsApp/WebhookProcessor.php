@@ -181,7 +181,8 @@ class WebhookProcessor
             'SELECT id FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL AND phone_normalized = :p LIMIT 1',
             [':tid' => $tenantId, ':p' => $normalized]
         );
-        if (!$lead && strlen($normalized) >= 8) {
+        $isLidKey = str_starts_with($normalized, 'lid:');
+        if (!$lead && strlen($normalized) >= 8 && !$isLidKey) {
             $suffix = substr($normalized, -8);
             $lead = Database::fetch(
                 'SELECT id FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL AND phone_normalized LIKE :sfx LIMIT 1',
@@ -203,7 +204,13 @@ class WebhookProcessor
             $autoLead = ($cfg['whatsapp_auto_create_lead'] ?? true) !== false;
 
             if ($autoLead) {
-                $leadId = $this->createInboundLead($tenantId, $digits, $pushName);
+                $lidOnly = !empty($resolved['lid_only']);
+                $leadId = $this->createInboundLead(
+                    $tenantId,
+                    $lidOnly ? $normalized : $digits,
+                    $pushName,
+                    $lidOnly
+                );
             }
         }
 
@@ -281,7 +288,7 @@ class WebhookProcessor
     /**
      * Resolve telefone E.164 e metadados para envio (LID + remoteJidAlt, grupos @g.us).
      *
-     * @return array{digits: string, normalized: string, is_group: bool, wa_meta: array<string, mixed>}|null
+     * @return array{digits: string, normalized: string, is_group: bool, wa_meta: array<string, mixed>, lid_only?: bool}|null
      */
     private function resolveContactFromKey(array $key, ?string $instancePhoneNorm = null): ?array
     {
@@ -335,27 +342,87 @@ class WebhookProcessor
             ];
         }
 
-        $jidForDigits = $pickPhonePeer($remoteJid, $remoteJidAlt, $participant);
-        if ($jidForDigits === '') {
-            if ($remoteJidAlt !== '') {
-                $jidForDigits = $remoteJidAlt;
-            } elseif ($remoteJid !== '') {
-                $jidForDigits = $remoteJid;
-            } elseif ($participant !== '') {
-                $jidForDigits = $participant;
-            } else {
-                App::log('[WebhookProcessor] resolveContact: sem JID');
+        $phoneJid = $pickPhonePeer($remoteJid, $remoteJidAlt, $participant);
+        $jidForDigits = '';
+
+        if ($phoneJid !== '') {
+            $jidForDigits = $phoneJid;
+        } elseif ($remoteJid !== '' && str_ends_with($remoteJid, '@lid')) {
+            $rawLocal = explode('@', $remoteJid)[0] ?? '';
+            $lidLocal = preg_replace('/\D/', '', $rawLocal) ?: $rawLocal;
+            if ($lidLocal === '') {
+                App::log('[WebhookProcessor] resolveContact: LID sem localPart utilizavel');
 
                 return null;
             }
+            if ($instancePhoneNorm !== null && $instancePhoneNorm !== '' && $lidLocal === $instancePhoneNorm) {
+                App::log('[WebhookProcessor] resolveContact: LID local igual ao telefone da instancia, ignorando');
+
+                return null;
+            }
+
+            $synthetic = 'lid:' . $lidLocal;
+            // #region agent log
+            DebugAgentLog::write('H3', 'WebhookProcessor.php:resolveContactFromKey', 'peer somente LID (nao e telefone)', [
+                'synthetic_len' => strlen($synthetic),
+                'remote_jid' => DebugAgentLog::maskRecipient($remoteJid),
+                'has_alt' => $remoteJidAlt !== '',
+            ]);
+            // #endregion
+
+            return [
+                'digits' => $lidLocal,
+                'normalized' => $synthetic,
+                'is_group' => false,
+                'lid_only' => true,
+                'wa_meta' => [
+                    'wa_remote_jid' => $remoteJid,
+                    'wa_remote_jid_alt' => $remoteJidAlt !== '' ? $remoteJidAlt : null,
+                    'wa_last_send_number' => $remoteJid,
+                    'wa_is_group' => false,
+                    'wa_lid_only' => true,
+                ],
+            ];
+        }
+
+        if ($jidForDigits === '') {
+            foreach ([$remoteJidAlt, $remoteJid, $participant] as $cand) {
+                if ($cand === '' || str_ends_with($cand, '@lid')) {
+                    continue;
+                }
+                if ($isPhoneJid($cand)) {
+                    if ($instancePhoneNorm !== null && $instancePhoneNorm !== '') {
+                        $n = $normFromPhoneJid($cand);
+                        if ($n !== '' && $n === $instancePhoneNorm) {
+                            continue;
+                        }
+                    }
+                    $jidForDigits = $cand;
+
+                    break;
+                }
+                $jidForDigits = $cand;
+
+                break;
+            }
+        }
+
+        if ($jidForDigits === '') {
+            App::log('[WebhookProcessor] resolveContact: sem JID utilizavel (sem telefone nem LID tratado)');
+
+            return null;
+        }
+
+        if (str_ends_with($jidForDigits, '@lid')) {
+            App::log('[WebhookProcessor] resolveContact: JID @lid nao deve ser usado como telefone');
+
+            return null;
         }
 
         $localPart = explode('@', $jidForDigits)[0] ?? '';
         $digits = preg_replace('/\D/', '', $localPart) ?? '';
 
         if ($digits === '') {
-            // Alguns payloads chegam só com LID. Nesses casos, mantemos o localPart
-            // para não perder o inbound; o envio usa fallback com JID completo.
             $digits = $localPart;
             if ($digits === '') {
                 App::log('[WebhookProcessor] resolveContact: digitos/localPart vazios apos JID ' . $jidForDigits);
@@ -382,6 +449,7 @@ class WebhookProcessor
             'digits' => $digits,
             'normalized' => $normalized,
             'is_group' => false,
+            'lid_only' => false,
             'wa_meta' => [
                 'wa_remote_jid' => $remoteJid !== '' ? $remoteJid : null,
                 'wa_remote_jid_alt' => $remoteJidAlt !== '' ? $remoteJidAlt : null,
@@ -414,7 +482,10 @@ class WebhookProcessor
         return $meta;
     }
 
-    private function createInboundLead(int $tenantId, string $digits, string $pushName): int
+    /**
+     * @param string $digits E.164 sem + ou chave sintetica `lid:<local>` quando $lidOnly
+     */
+    private function createInboundLead(int $tenantId, string $digits, string $pushName, bool $lidOnly = false): int
     {
         $pipe = Database::fetch(
             'SELECT id FROM pipelines WHERE tenant_id = :tid AND is_default = 1 LIMIT 1',
@@ -439,7 +510,9 @@ class WebhookProcessor
             $stageId = $anySt ? (int) $anySt['id'] : 1;
         }
 
-        $name = $pushName !== '' ? $pushName : ('WhatsApp ' . $digits);
+        $name = $pushName !== '' ? $pushName : ($lidOnly ? 'WhatsApp' : ('WhatsApp ' . $digits));
+        $phoneVal = $lidOnly ? null : $digits;
+        $pnVal = $lidOnly ? $digits : (PhoneHelper::normalize($digits) ?: $digits);
 
         Database::query(
             'INSERT INTO leads (tenant_id, pipeline_id, stage_id, name, phone, phone_normalized, source, status, score, temperature)
@@ -449,8 +522,8 @@ class WebhookProcessor
                 ':pid' => $pipelineId,
                 ':sid' => $stageId,
                 ':name' => $name,
-                ':phone' => $digits,
-                ':pn' => PhoneHelper::normalize($digits) ?: $digits,
+                ':phone' => $phoneVal,
+                ':pn' => $pnVal,
             ]
         );
 

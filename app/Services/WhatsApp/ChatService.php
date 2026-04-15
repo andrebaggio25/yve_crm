@@ -245,6 +245,13 @@ class ChatService
             return preg_replace('/\D/', '', $last) ?: $last;
         }
 
-        return preg_replace('/\D/', '', (string) ($conv['contact_phone'] ?? '')) ?: '';
+        $cp = (string) ($conv['contact_phone'] ?? '');
+        if (str_starts_with($cp, 'lid:')) {
+            $loc = preg_replace('/\D/', '', substr($cp, 4)) ?: '';
+
+            return $loc !== '' ? ($loc . '@lid') : '';
+        }
+
+        return preg_replace('/\D/', '', $cp) ?: '';
     }
 }
