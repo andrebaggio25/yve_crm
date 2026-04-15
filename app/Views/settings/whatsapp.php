@@ -96,12 +96,15 @@ $scripts = ['whatsapp-settings'];
         </div>
 
         <!-- Acoes -->
-        <div id="connection-actions" class="mt-4 flex gap-2">
+        <div id="connection-actions" class="mt-4 flex flex-wrap gap-2">
             <button type="button" id="btn-connect" class="hidden rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700">
                 Conectar Numero
             </button>
             <button type="button" id="btn-disconnect" class="hidden rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-100">
                 Desconectar
+            </button>
+            <button type="button" id="btn-configure-webhook" class="rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100">
+                Configurar Webhook
             </button>
         </div>
     </div>

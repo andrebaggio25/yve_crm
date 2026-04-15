@@ -130,6 +130,7 @@ return function (Router $router) {
             $router->get('/instances/{id}/qr-code', 'WhatsAppInstanceController@apiQrCode', 'api.wa.qr');
             $router->get('/instances/{id}/check-status', 'WhatsAppInstanceController@apiCheckStatus', 'api.wa.check');
             $router->post('/instances/{id}/disconnect', 'WhatsAppInstanceController@apiDisconnect', 'api.wa.disconnect');
+            $router->post('/instances/{id}/configure-webhook', 'WhatsAppInstanceController@apiConfigureWebhook', 'api.wa.webhook');
         });
 
         $router->group('settings/tenant', function ($router) {

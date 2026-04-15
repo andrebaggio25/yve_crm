@@ -71,6 +71,30 @@ document.addEventListener('DOMContentLoaded', function() {
             btn.textContent = 'Desconectar';
         }
     });
+
+    // Botao Configurar Webhook
+    document.getElementById('btn-configure-webhook')?.addEventListener('click', async () => {
+        const btn = document.getElementById('btn-configure-webhook');
+        const originalText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Configurando...';
+
+        try {
+            // Buscar instancia atual para obter o ID dinamico
+            const listRes = await API.get('/api/settings/whatsapp/instances');
+            const instance = listRes.data?.instances?.[0];
+            if (!instance) {
+                throw new Error('Nenhuma instancia encontrada');
+            }
+            const r = await API.post(`/api/settings/whatsapp/instances/${instance.id}/configure-webhook`, {});
+            alert(r.message || 'Webhook configurado com sucesso!');
+        } catch (err) {
+            alert(err.message || 'Erro ao configurar webhook');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = originalText;
+        }
+    });
 });
 
 async function loadWhatsAppStatus() {

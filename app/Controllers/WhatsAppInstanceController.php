@@ -476,6 +476,57 @@ class WhatsAppInstanceController
         }
     }
 
+    /**
+     * Configura webhook para uma instancia existente.
+     */
+    public function apiConfigureWebhook(Request $request, Response $response): void
+    {
+        $id = (int) ($request->getParam('id') ?? 0);
+        if ($id <= 0) {
+            $response->jsonError('ID invalido', 400);
+            return;
+        }
+
+        try {
+            $row = TenantAwareDatabase::fetch(
+                'SELECT api_url, api_key, instance_name, webhook_token FROM whatsapp_instances WHERE id = :id AND tenant_id = :tenant_id',
+                TenantAwareDatabase::mergeTenantParams([':id' => $id])
+            );
+
+            if (!$row) {
+                $response->jsonError('Instancia nao encontrada', 404);
+                return;
+            }
+
+            // Construir URL do webhook
+            $webhookUrl = '';
+            if (!empty($_SERVER['HTTP_HOST'])) {
+                $scheme = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https' : 'http';
+                $webhookUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . '/webhook/evolution/' . $row['webhook_token'];
+            }
+
+            if (empty($webhookUrl)) {
+                $response->jsonError('Nao foi possivel construir URL do webhook', 500);
+                return;
+            }
+
+            $evo = new EvolutionApiService();
+            $res = $evo->setWebhook($row['api_url'], $row['api_key'], $row['instance_name'], $webhookUrl);
+
+            if ($res['ok']) {
+                App::log("[WhatsApp] Webhook configurado para instancia {$row['instance_name']}: {$webhookUrl}");
+                $response->jsonSuccess([], 'Webhook configurado com sucesso');
+            } else {
+                $errorMsg = is_array($res['body']) ? json_encode($res['body']) : ($res['raw'] ?? 'Erro desconhecido');
+                App::logError("[WhatsApp] Falha ao configurar webhook: {$errorMsg}");
+                $response->jsonError('Falha ao configurar webhook: ' . $errorMsg, 500);
+            }
+        } catch (\Throwable $e) {
+            App::logError('WA configure webhook', $e);
+            $response->jsonError('Erro ao configurar webhook', 500);
+        }
+    }
+
     private function formatPhone(string $phone): string
     {
         $phone = preg_replace('/\D/', '', $phone);
