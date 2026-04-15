@@ -165,18 +165,18 @@ class WhatsAppInstanceController
             ]);
             App::log("[WhatsApp] apiCreate - Instancia criada no banco local, ID: {$id}");
 
-            // Construir URL do webhook
+            // Construir URL do webhook (mas nao enviar na criacao inicial - causa erro 400)
             $webhookUrl = '';
             if (!empty($_SERVER['HTTP_HOST'])) {
                 $scheme = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https' : 'http';
                 $webhookUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . '/webhook/evolution/' . $token;
             }
-            App::log("[WhatsApp] apiCreate - Webhook URL: {$webhookUrl}");
+            App::log("[WhatsApp] apiCreate - Webhook URL (para uso futuro): {$webhookUrl}");
 
-            // Criar instancia na Evolution API
+            // Criar instancia na Evolution API (SEM webhook - evita erro "Invalid url property")
             App::log('[WhatsApp] apiCreate - Chamando Evolution API para criar instancia...');
             $evo = new EvolutionApiService();
-            $createRes = $evo->createInstance($global['api_url'], $global['api_key'], $instanceName, $webhookUrl);
+            $createRes = $evo->createInstance($global['api_url'], $global['api_key'], $instanceName, null);
             App::log('[WhatsApp] apiCreate - Resposta da Evolution: ' . json_encode($createRes));
 
             if (!$createRes['ok']) {
