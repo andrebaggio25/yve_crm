@@ -185,8 +185,36 @@ class WhatsAppInstanceController
                     'DELETE FROM whatsapp_instances WHERE id = :id AND tenant_id = :tid',
                     [':id' => $id, ':tid' => $tid]
                 );
-                App::logError('WA create on Evolution failed: ' . ($createRes['body']['message'] ?? 'Unknown error'));
-                $response->jsonError('Erro ao criar instancia na Evolution API: ' . ($createRes['body']['message'] ?? 'Erro desconhecido'), 500);
+                
+                // Extrair mensagem de erro da Evolution (pode estar em diferentes formatos)
+                $errorMsg = 'Erro desconhecido';
+                $errorDetail = '';
+                
+                if (is_array($createRes['body'])) {
+                    if (isset($createRes['body']['response']['message'])) {
+                        // Erro de validacao: {response: {message: [[...]]}}
+                        $messages = $createRes['body']['response']['message'];
+                        if (is_array($messages)) {
+                            $errorDetail = json_encode($messages);
+                        } else {
+                            $errorDetail = $messages;
+                        }
+                    }
+                    $errorMsg = $createRes['body']['message'] 
+                        ?? $createRes['body']['error'] 
+                        ?? $createRes['body']['status']
+                        ?? json_encode($createRes['body']);
+                } elseif (is_string($createRes['body'])) {
+                    $errorMsg = $createRes['body'];
+                }
+                
+                $fullError = "HTTP {$createRes['http']} - {$errorMsg}";
+                if ($errorDetail) {
+                    $fullError .= " | Detalhe: {$errorDetail}";
+                }
+                
+                App::logError("[WhatsApp] WA create on Evolution failed: {$fullError}, raw: " . ($createRes['raw'] ?? 'empty'));
+                $response->jsonError('Erro ao criar instancia na Evolution API: ' . $fullError, 500);
                 return;
             }
 
