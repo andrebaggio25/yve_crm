@@ -64,6 +64,35 @@ try {
     echo "URL: {$apiUrl}\n";
     echo "Key: " . substr($apiKey, 0, 10) . "...\n";
     
+    // Teste com header exato que a Evolution espera
+    echo "\n=== Teste direto com curl ===\n";
+    $testUrl = $apiUrl . '/instance/create';
+    $testPayload = json_encode([
+        'instanceName' => 'teste-curl-' . time(),
+        'qrcode' => true,
+        'webhook' => 'https://homcrm.yvebeauty.com/webhook/evolution/teste',
+        'webhook_by_events' => true,
+        'events' => ['MESSAGES_UPSERT', 'CONNECTION_UPDATE']
+    ]);
+    
+    $ch = curl_init($testUrl);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $testPayload);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Content-Type: application/json',
+        'apikey: ' . $apiKey
+    ]);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+    
+    $raw = curl_exec($ch);
+    $http = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    
+    echo "HTTP: {$http}\n";
+    echo "Raw: {$raw}\n";
+    
+    echo "\n=== Teste via Service ===\n";
     $result = $evo->createInstance(
         $apiUrl,
         $apiKey,
