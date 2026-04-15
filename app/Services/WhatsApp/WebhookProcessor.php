@@ -97,10 +97,13 @@ class WebhookProcessor
             App::log('[WebhookProcessor] handleMessages: formato legado/array, count=' . count($messages));
         }
 
+        $senderJid = (string) ($payload['sender'] ?? '');
+
         foreach ($messages as $msg) {
             if (!is_array($msg)) {
                 continue;
             }
+            $msg['__webhook_sender'] = $senderJid;
             $this->processOneMessage($msg, $tenantId, $whatsappInstanceId, $event);
         }
     }
@@ -115,7 +118,8 @@ class WebhookProcessor
             return;
         }
 
-        $resolved = $this->resolveContactFromKey($key);
+        $senderJid = (string) ($msg['__webhook_sender'] ?? '');
+        $resolved = $this->resolveContactFromKey($key, $senderJid);
         if ($resolved === null) {
             return;
         }
@@ -266,7 +270,7 @@ class WebhookProcessor
      *
      * @return array{digits: string, normalized: string, is_group: bool, wa_meta: array<string, mixed>}|null
      */
-    private function resolveContactFromKey(array $key): ?array
+    private function resolveContactFromKey(array $key, string $senderJid = ''): ?array
     {
         $remoteJid = (string) ($key['remoteJid'] ?? '');
         $remoteJidAlt = (string) ($key['remoteJidAlt'] ?? '');
@@ -294,12 +298,6 @@ class WebhookProcessor
             ];
         }
 
-        if ($remoteJid !== '' && str_ends_with($remoteJid, '@lid') && !$isPhoneJid($remoteJidAlt) && !$isPhoneJid($participant)) {
-            App::log('[WebhookProcessor] LID sem remoteJidAlt numerico, ignorando');
-
-            return null;
-        }
-
         $jidForDigits = '';
         if ($isPhoneJid($remoteJid)) {
             $jidForDigits = $remoteJid;
@@ -307,6 +305,8 @@ class WebhookProcessor
             $jidForDigits = $remoteJidAlt;
         } elseif ($isPhoneJid($participant)) {
             $jidForDigits = $participant;
+        } elseif ($isPhoneJid($senderJid)) {
+            $jidForDigits = $senderJid;
         } elseif ($remoteJidAlt !== '') {
             $jidForDigits = $remoteJidAlt;
         } elseif ($remoteJid !== '') {
@@ -323,9 +323,14 @@ class WebhookProcessor
         $digits = preg_replace('/\D/', '', $localPart) ?? '';
 
         if ($digits === '') {
-            App::log('[WebhookProcessor] resolveContact: digitos vazios apos JID ' . $jidForDigits);
+            // Alguns payloads chegam só com LID. Nesses casos, mantemos o localPart
+            // para não perder o inbound; o envio usa fallback com JID completo.
+            $digits = $localPart;
+            if ($digits === '') {
+                App::log('[WebhookProcessor] resolveContact: digitos/localPart vazios apos JID ' . $jidForDigits);
 
-            return null;
+                return null;
+            }
         }
 
         $normalized = PhoneHelper::normalize($digits) ?: $digits;
@@ -337,6 +342,7 @@ class WebhookProcessor
             'wa_meta' => [
                 'wa_remote_jid' => $remoteJid !== '' ? $remoteJid : null,
                 'wa_remote_jid_alt' => $remoteJidAlt !== '' ? $remoteJidAlt : null,
+                'wa_sender_jid' => $senderJid !== '' ? $senderJid : null,
                 'wa_last_send_number' => $digits,
                 'wa_is_group' => false,
             ],

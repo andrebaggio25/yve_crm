@@ -177,11 +177,6 @@ class ChatService
     }
 
     /**
-     * Numero ou JID aceito pelo POST /message/sendText da Evolution (digitos E.164 ou grupo ...@g.us).
-     *
-     * @param array<string, mixed> $conv
-     */
-    /**
      * @param array<string, mixed> $conv
      *
      * @return array<string, mixed>
@@ -200,6 +195,11 @@ class ChatService
     {
         $meta = $this->conversationMetadata($conv);
 
+        $senderJid = (string) ($meta['wa_sender_jid'] ?? '');
+        if ($senderJid !== '' && str_contains($senderJid, '@')) {
+            return $senderJid;
+        }
+
         $remoteJid = (string) ($meta['wa_remote_jid'] ?? '');
         if ($remoteJid !== '' && str_ends_with($remoteJid, '@g.us')) {
             return $remoteJid;
@@ -210,6 +210,14 @@ class ChatService
             $local = explode('@', $alt)[0] ?? '';
 
             return preg_replace('/\D/', '', $local) ?: $alt;
+        }
+
+        if ($alt !== '' && str_contains($alt, '@')) {
+            return $alt;
+        }
+
+        if ($remoteJid !== '' && str_contains($remoteJid, '@')) {
+            return $remoteJid;
         }
 
         $last = (string) ($meta['wa_last_send_number'] ?? '');
