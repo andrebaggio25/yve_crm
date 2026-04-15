@@ -84,8 +84,10 @@ class EvolutionApiService
         $url = $baseUrl . '/instance/create';
 
         // Payload completo conforme documentacao Evolution API v2
+        // Teste 5 comprovou que 'integration' é obrigatório
         $data = [
             'instanceName' => $instanceName,
+            'integration' => 'WHATSAPP-BAILEYS',
             'qrcode' => true,
             'webhook' => $webhookUrl ?? '',
             'webhook_by_events' => !empty($webhookUrl),

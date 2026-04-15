@@ -68,6 +68,7 @@ try {
     echo "\n=== Teste 1: /instance/create ===\n";
     $testPayload = json_encode([
         'instanceName' => 'teste-1-' . time(),
+        'integration' => 'WHATSAPP-BAILEYS',
         'qrcode' => true,
         'webhook' => 'https://homcrm.yvebeauty.com/webhook/evolution/teste',
         'webhook_by_events' => true,
