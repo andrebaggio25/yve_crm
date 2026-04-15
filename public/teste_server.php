@@ -64,18 +64,17 @@ try {
     echo "URL: {$apiUrl}\n";
     echo "Key: " . substr($apiKey, 0, 10) . "...\n";
     
-    // Teste com header exato que a Evolution espera
-    echo "\n=== Teste direto com curl ===\n";
-    $testUrl = $apiUrl . '/instance/create';
+    // Teste 1: Endpoint /instance/create (padrão)
+    echo "\n=== Teste 1: /instance/create ===\n";
     $testPayload = json_encode([
-        'instanceName' => 'teste-curl-' . time(),
+        'instanceName' => 'teste-1-' . time(),
         'qrcode' => true,
         'webhook' => 'https://homcrm.yvebeauty.com/webhook/evolution/teste',
         'webhook_by_events' => true,
         'events' => ['MESSAGES_UPSERT', 'CONNECTION_UPDATE']
     ]);
     
-    $ch = curl_init($testUrl);
+    $ch = curl_init($apiUrl . '/instance/create');
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $testPayload);
@@ -85,18 +84,53 @@ try {
     ]);
     curl_setopt($ch, CURLOPT_TIMEOUT, 30);
     
-    $raw = curl_exec($ch);
-    $http = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $raw1 = curl_exec($ch);
+    $http1 = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
     
-    echo "HTTP: {$http}\n";
-    echo "Raw: {$raw}\n";
+    echo "HTTP: {$http1}\n";
+    echo "Response: {$raw1}\n";
     
-    echo "\n=== Teste via Service ===\n";
+    // Teste 2: Endpoint sem /instance/ prefix (algumas versoes)
+    echo "\n=== Teste 2: /create (endpoint alternativo) ===\n";
+    $ch2 = curl_init($apiUrl . '/create');
+    curl_setopt($ch2, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch2, CURLOPT_POST, true);
+    curl_setopt($ch2, CURLOPT_POSTFIELDS, $testPayload);
+    curl_setopt($ch2, CURLOPT_HTTPHEADER, [
+        'Content-Type: application/json',
+        'apikey: ' . $apiKey
+    ]);
+    curl_setopt($ch2, CURLOPT_TIMEOUT, 30);
+    
+    $raw2 = curl_exec($ch2);
+    $http2 = curl_getinfo($ch2, CURLINFO_HTTP_CODE);
+    curl_close($ch2);
+    
+    echo "HTTP: {$http2}\n";
+    echo "Response: {$raw2}\n";
+    
+    // Teste 3: GET /instance/fetchInstances (para verificar se auth funciona)
+    echo "\n=== Teste 3: GET /instance/fetchInstances (verificar auth) ===\n";
+    $ch3 = curl_init($apiUrl . '/instance/fetchInstances');
+    curl_setopt($ch3, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch3, CURLOPT_HTTPHEADER, [
+        'apikey: ' . $apiKey
+    ]);
+    curl_setopt($ch3, CURLOPT_TIMEOUT, 30);
+    
+    $raw3 = curl_exec($ch3);
+    $http3 = curl_getinfo($ch3, CURLINFO_HTTP_CODE);
+    curl_close($ch3);
+    
+    echo "HTTP: {$http3}\n";
+    echo "Response: " . substr($raw3, 0, 500) . "\n";
+    
+    echo "\n=== Teste via Service (EvolutionApiService) ===\n";
     $result = $evo->createInstance(
         $apiUrl,
         $apiKey,
-        'teste-' . time(),
+        'teste-service-' . time(),
         'https://homcrm.yvebeauty.com/webhook/evolution/teste'
     );
     
