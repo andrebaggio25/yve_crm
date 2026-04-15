@@ -43,6 +43,14 @@ try {
         throw new Exception('EvolutionApiService.php nao encontrado');
     }
     
+    // Carregar App.php tambem (necessario para os logs)
+    $appPath = __DIR__ . '/../app/Core/App.php';
+    echo "App.php existe: " . (file_exists($appPath) ? 'Sim' : 'Nao') . "\n";
+    if (file_exists($appPath)) {
+        require_once $appPath;
+        echo "App.php carregado OK\n";
+    }
+    
     require_once $servicePath;
     echo "EvolutionApiService carregado OK\n\n";
     
