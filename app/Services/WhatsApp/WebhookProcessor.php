@@ -115,17 +115,15 @@ class WebhookProcessor
             return;
         }
 
-        $remote = (string) ($key['remoteJid'] ?? $key['participant'] ?? '');
-        $digits = preg_replace('/\D/', '', explode('@', $remote)[0] ?? '') ?? '';
-
-        if ($digits === '') {
-            App::log('[WebhookProcessor] processOneMessage: remoteJid vazio, ignorando');
-
+        $resolved = $this->resolveContactFromKey($key);
+        if ($resolved === null) {
             return;
         }
 
-        $normalized = PhoneHelper::normalize($digits) ?: $digits;
-        App::log("[WebhookProcessor] processOneMessage: phone={$normalized} event={$eventName}");
+        $digits = $resolved['digits'];
+        $normalized = $resolved['normalized'];
+        $waMetaJson = json_encode($resolved['wa_meta'], JSON_UNESCAPED_UNICODE);
+        App::log("[WebhookProcessor] processOneMessage: phone={$normalized} event={$eventName} is_group=" . ($resolved['is_group'] ? '1' : '0'));
 
         $messageBlock = $msg['message'] ?? [];
         $text = '';
@@ -176,7 +174,7 @@ class WebhookProcessor
 
         $leadId = $lead ? (int) $lead['id'] : null;
 
-        if ($leadId === null) {
+        if ($leadId === null && !$resolved['is_group']) {
             $settings = Database::fetch('SELECT settings_json FROM tenants WHERE id = :id', [':id' => $tenantId]);
             $cfg = [];
             if (!empty($settings['settings_json'])) {
@@ -193,14 +191,14 @@ class WebhookProcessor
         }
 
         $conv = Database::fetch(
-            'SELECT id, unread_count FROM conversations WHERE tenant_id = :tid AND whatsapp_instance_id = :wid AND contact_phone = :phone LIMIT 1',
+            'SELECT id, unread_count, metadata_json FROM conversations WHERE tenant_id = :tid AND whatsapp_instance_id = :wid AND contact_phone = :phone LIMIT 1',
             [':tid' => $tenantId, ':wid' => $whatsappInstanceId, ':phone' => $normalized]
         );
 
         if (!$conv) {
             Database::query(
-                'INSERT INTO conversations (tenant_id, lead_id, whatsapp_instance_id, contact_phone, contact_push_name, status, last_message_at, last_message_preview, unread_count)
-                 VALUES (:tid, :lid, :wid, :phone, :push, \'open\', NOW(), :preview, 1)',
+                'INSERT INTO conversations (tenant_id, lead_id, whatsapp_instance_id, contact_phone, contact_push_name, status, last_message_at, last_message_preview, unread_count, metadata_json)
+                 VALUES (:tid, :lid, :wid, :phone, :push, \'open\', NOW(), :preview, 1, :meta)',
                 [
                     ':tid' => $tenantId,
                     ':lid' => $leadId,
@@ -208,6 +206,7 @@ class WebhookProcessor
                     ':phone' => $normalized,
                     ':push' => $pushName ?: null,
                     ':preview' => mb_substr($text ?: '[' . $type . ']', 0, 200),
+                    ':meta' => $waMetaJson,
                 ]
             );
             $convId = (int) Database::getInstance()->lastInsertId();
@@ -216,8 +215,9 @@ class WebhookProcessor
         } else {
             $convId = (int) $conv['id'];
             $unread = (int) $conv['unread_count'] + 1;
+            $mergedMeta = $this->mergeConversationMetadata($conv['metadata_json'] ?? null, $resolved['wa_meta']);
             Database::query(
-                'UPDATE conversations SET lead_id = COALESCE(lead_id, :lid), last_message_at = NOW(), last_message_preview = :preview, unread_count = :unread, contact_push_name = COALESCE(:push, contact_push_name) WHERE id = :id AND tenant_id = :tid',
+                'UPDATE conversations SET lead_id = COALESCE(lead_id, :lid), last_message_at = NOW(), last_message_preview = :preview, unread_count = :unread, contact_push_name = COALESCE(:push, contact_push_name), metadata_json = :meta WHERE id = :id AND tenant_id = :tid',
                 [
                     ':id' => $convId,
                     ':tid' => $tenantId,
@@ -225,6 +225,7 @@ class WebhookProcessor
                     ':preview' => mb_substr($text ?: '[' . $type . ']', 0, 200),
                     ':unread' => $unread,
                     ':push' => $pushName ?: null,
+                    ':meta' => json_encode($mergedMeta, JSON_UNESCAPED_UNICODE),
                 ]
             );
             App::log("[WebhookProcessor] conversa atualizada id={$convId} unread={$unread}");
@@ -258,6 +259,111 @@ class WebhookProcessor
         } catch (\Throwable $e) {
             App::logError('AutomationEngine webhook', $e);
         }
+    }
+
+    /**
+     * Resolve telefone E.164 e metadados para envio (LID + remoteJidAlt, grupos @g.us).
+     *
+     * @return array{digits: string, normalized: string, is_group: bool, wa_meta: array<string, mixed>}|null
+     */
+    private function resolveContactFromKey(array $key): ?array
+    {
+        $remoteJid = (string) ($key['remoteJid'] ?? '');
+        $remoteJidAlt = (string) ($key['remoteJidAlt'] ?? '');
+        $participant = (string) ($key['participant'] ?? '');
+
+        $isPhoneJid = static function (string $jid): bool {
+            return $jid !== '' && (str_ends_with($jid, '@s.whatsapp.net') || str_ends_with($jid, '@c.us'));
+        };
+
+        if ($remoteJid !== '' && str_ends_with($remoteJid, '@g.us')) {
+            $local = explode('@', $remoteJid)[0] ?? '';
+            $digits = preg_replace('/\D/', '', $local) ?: $local;
+            $normalized = PhoneHelper::normalize($digits) ?: $digits;
+
+            return [
+                'digits' => $digits,
+                'normalized' => $normalized,
+                'is_group' => true,
+                'wa_meta' => [
+                    'wa_remote_jid' => $remoteJid,
+                    'wa_remote_jid_alt' => $remoteJidAlt !== '' ? $remoteJidAlt : null,
+                    'wa_last_send_number' => $remoteJid,
+                    'wa_is_group' => true,
+                ],
+            ];
+        }
+
+        if ($remoteJid !== '' && str_ends_with($remoteJid, '@lid') && !$isPhoneJid($remoteJidAlt) && !$isPhoneJid($participant)) {
+            App::log('[WebhookProcessor] LID sem remoteJidAlt numerico, ignorando');
+
+            return null;
+        }
+
+        $jidForDigits = '';
+        if ($isPhoneJid($remoteJid)) {
+            $jidForDigits = $remoteJid;
+        } elseif ($isPhoneJid($remoteJidAlt)) {
+            $jidForDigits = $remoteJidAlt;
+        } elseif ($isPhoneJid($participant)) {
+            $jidForDigits = $participant;
+        } elseif ($remoteJidAlt !== '') {
+            $jidForDigits = $remoteJidAlt;
+        } elseif ($remoteJid !== '') {
+            $jidForDigits = $remoteJid;
+        } elseif ($participant !== '') {
+            $jidForDigits = $participant;
+        } else {
+            App::log('[WebhookProcessor] resolveContact: sem JID');
+
+            return null;
+        }
+
+        $localPart = explode('@', $jidForDigits)[0] ?? '';
+        $digits = preg_replace('/\D/', '', $localPart) ?? '';
+
+        if ($digits === '') {
+            App::log('[WebhookProcessor] resolveContact: digitos vazios apos JID ' . $jidForDigits);
+
+            return null;
+        }
+
+        $normalized = PhoneHelper::normalize($digits) ?: $digits;
+
+        return [
+            'digits' => $digits,
+            'normalized' => $normalized,
+            'is_group' => false,
+            'wa_meta' => [
+                'wa_remote_jid' => $remoteJid !== '' ? $remoteJid : null,
+                'wa_remote_jid_alt' => $remoteJidAlt !== '' ? $remoteJidAlt : null,
+                'wa_last_send_number' => $digits,
+                'wa_is_group' => false,
+            ],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $waMeta
+     *
+     * @return array<string, mixed>
+     */
+    private function mergeConversationMetadata(?string $existingJson, array $waMeta): array
+    {
+        $meta = [];
+        if ($existingJson !== null && $existingJson !== '') {
+            $decoded = json_decode($existingJson, true);
+            $meta = is_array($decoded) ? $decoded : [];
+        }
+
+        foreach ($waMeta as $k => $v) {
+            if ($v === null || $v === '') {
+                continue;
+            }
+            $meta[$k] = $v;
+        }
+
+        return $meta;
     }
 
     private function createInboundLead(int $tenantId, string $digits, string $pushName): int

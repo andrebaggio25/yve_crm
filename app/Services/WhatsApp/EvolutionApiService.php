@@ -10,6 +10,38 @@ use App\Core\App;
 class EvolutionApiService
 {
     /**
+     * Extrai mensagem de erro legivel da resposta Evolution (para exibir no CRM / logs).
+     */
+    public static function summarizeError(array $res): string
+    {
+        $body = $res['body'] ?? null;
+        if (is_array($body)) {
+            if (isset($body['message']) && is_string($body['message'])) {
+                return $body['message'];
+            }
+            if (isset($body['error']) && is_string($body['error'])) {
+                return $body['error'];
+            }
+            if (isset($body['response']['message'])) {
+                $m = $body['response']['message'];
+                if (is_string($m)) {
+                    return $m;
+                }
+                if (is_array($m)) {
+                    return json_encode($m, JSON_UNESCAPED_UNICODE);
+                }
+            }
+            $enc = json_encode($body, JSON_UNESCAPED_UNICODE);
+
+            return mb_substr((string) $enc, 0, 400);
+        }
+
+        $raw = (string) ($res['raw'] ?? '');
+
+        return mb_substr($raw, 0, 400);
+    }
+
+    /**
      * Envia mensagem de texto.
      * @return array{ok:bool,http:int,body:mixed,raw:string}
      */

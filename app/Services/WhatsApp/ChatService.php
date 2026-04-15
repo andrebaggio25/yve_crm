@@ -2,6 +2,7 @@
 
 namespace App\Services\WhatsApp;
 
+use App\Core\App;
 use App\Core\Session;
 use App\Core\TenantContext;
 use App\Core\TenantAwareDatabase;
@@ -99,11 +100,13 @@ class ChatService
         }
 
         $user = Session::user();
-        $digits = preg_replace('/\D/', '', (string) $conv['contact_phone']) ?: '';
+        $numberForEvolution = $this->evolutionRecipientNumber($conv);
 
-        if ($digits === '') {
+        if ($numberForEvolution === '') {
             return ['ok' => false, 'message' => 'Telefone invalido'];
         }
+
+        App::log('[Chat] sendText conv=' . $conversationId . ' number_len=' . strlen($numberForEvolution));
 
         $mid = TenantAwareDatabase::insert('messages', [
             'conversation_id' => $conversationId,
@@ -121,9 +124,24 @@ class ChatService
             (string) $conv['api_url'],
             (string) $conv['api_key'],
             (string) $conv['instance_name'],
-            $digits,
+            $numberForEvolution,
             $text
         );
+
+        if (!$res['ok'] && !str_contains($numberForEvolution, '@')) {
+            $meta = $this->conversationMetadata($conv);
+            $alt = (string) ($meta['wa_remote_jid_alt'] ?? '');
+            if ($alt !== '' && str_contains($alt, '@')) {
+                App::log('[Chat] sendText retentativa com JID completo');
+                $res = $evo->sendText(
+                    (string) $conv['api_url'],
+                    (string) $conv['api_key'],
+                    (string) $conv['instance_name'],
+                    $alt,
+                    $text
+                );
+            }
+        }
 
         if ($res['ok']) {
             TenantAwareDatabase::update(
@@ -140,7 +158,14 @@ class ChatService
                 [':id' => $mid]
             );
 
-            return ['ok' => false, 'message' => 'Falha ao enviar via Evolution', 'message_id' => $mid];
+            $detail = EvolutionApiService::summarizeError($res);
+            $msg = 'Falha ao enviar via Evolution (HTTP ' . ($res['http'] ?? 0) . ')';
+            if ($detail !== '') {
+                $msg .= ': ' . $detail;
+            }
+            App::logError('[Chat] sendText Evolution falhou: ' . $msg);
+
+            return ['ok' => false, 'message' => $msg, 'message_id' => $mid];
         }
 
         TenantAwareDatabase::query(
@@ -149,5 +174,52 @@ class ChatService
         );
 
         return ['ok' => true, 'message_id' => $mid];
+    }
+
+    /**
+     * Numero ou JID aceito pelo POST /message/sendText da Evolution (digitos E.164 ou grupo ...@g.us).
+     *
+     * @param array<string, mixed> $conv
+     */
+    /**
+     * @param array<string, mixed> $conv
+     *
+     * @return array<string, mixed>
+     */
+    private function conversationMetadata(array $conv): array
+    {
+        $metaRaw = $conv['metadata_json'] ?? null;
+        if ($metaRaw === null || $metaRaw === '') {
+            return [];
+        }
+
+        return is_string($metaRaw) ? (json_decode($metaRaw, true) ?: []) : (is_array($metaRaw) ? $metaRaw : []);
+    }
+
+    private function evolutionRecipientNumber(array $conv): string
+    {
+        $meta = $this->conversationMetadata($conv);
+
+        $remoteJid = (string) ($meta['wa_remote_jid'] ?? '');
+        if ($remoteJid !== '' && str_ends_with($remoteJid, '@g.us')) {
+            return $remoteJid;
+        }
+
+        $alt = (string) ($meta['wa_remote_jid_alt'] ?? '');
+        if ($alt !== '' && (str_ends_with($alt, '@s.whatsapp.net') || str_ends_with($alt, '@c.us'))) {
+            $local = explode('@', $alt)[0] ?? '';
+
+            return preg_replace('/\D/', '', $local) ?: $alt;
+        }
+
+        $last = (string) ($meta['wa_last_send_number'] ?? '');
+        if ($last !== '' && str_contains($last, '@')) {
+            return $last;
+        }
+        if ($last !== '') {
+            return preg_replace('/\D/', '', $last) ?: $last;
+        }
+
+        return preg_replace('/\D/', '', (string) ($conv['contact_phone'] ?? '')) ?: '';
     }
 }
