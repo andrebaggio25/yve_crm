@@ -3,6 +3,7 @@
 namespace App\Services\WhatsApp;
 
 use App\Core\Session;
+use App\Core\TenantContext;
 use App\Core\TenantAwareDatabase;
 
 class ChatService
@@ -12,9 +13,11 @@ class ChatService
      */
     public function listConversations(string $filter = 'all'): array
     {
+        // Usando subquery para evitar parametro :tenant_id duplicado no JOIN
+        $tid = TenantContext::getEffectiveTenantId();
         $sql = "SELECT c.*, l.name as lead_name 
                 FROM conversations c
-                LEFT JOIN leads l ON l.id = c.lead_id AND l.tenant_id = :tenant_id
+                LEFT JOIN leads l ON l.id = c.lead_id AND l.tenant_id = {$tid}
                 WHERE c.tenant_id = :tenant_id";
         $params = [];
 
