@@ -10,6 +10,8 @@ use App\Core\Session;
 use App\Helpers\LeadTagHelper;
 use App\Helpers\PhoneHelper;
 use App\Services\LeadImportService;
+use App\Services\WhatsApp\LidResolverService;
+use App\Core\TenantContext;
 
 class ImportController
 {
@@ -233,7 +235,9 @@ class ImportController
             'imported' => 0,
             'duplicates' => 0,
             'errors' => [],
+            'whatsapp_enriched' => 0,
         ];
+        $importedForWa = [];
 
         $db = TenantAwareDatabase::getInstance();
         $db->beginTransaction();
@@ -304,9 +308,22 @@ class ImportController
                 ]);
 
                 $results['imported']++;
+                if ($phoneNormalized) {
+                    $importedForWa[] = ['id' => (int) $leadId, 'phone' => (string) $phoneNormalized];
+                }
             }
 
             $db->commit();
+
+            $tid = (int) TenantContext::getEffectiveTenantId();
+            foreach ($importedForWa as $row) {
+                try {
+                    LidResolverService::enrichLeadMetadataAfterPhoneCheck($tid, $row['id'], $row['phone']);
+                    $results['whatsapp_enriched']++;
+                } catch (\Throwable $e) {
+                    App::logError('Import WhatsApp enrich', $e);
+                }
+            }
 
             $this->cleanupImportFile($session);
             Session::remove(self::SESSION_PREFIX . $token);

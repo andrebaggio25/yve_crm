@@ -18,8 +18,29 @@ const Inbox = {
             this.send();
         });
 
-        this.loadList();
+        (async () => {
+            await this.loadList();
+            await this.openFromHash();
+        })();
         this.state.pollList = setInterval(() => this.loadList(), 10000);
+        window.addEventListener('hashchange', () => this.openFromHash());
+    },
+
+    /** Abre conversa quando a URL tem #conv-{id} (ex.: vindo do Kanban). */
+    async openFromHash() {
+        const h = (location.hash || '').replace(/^#/, '');
+        const m = /^conv-(\d+)$/.exec(h);
+        if (!m) return;
+        const id = parseInt(m[1], 10);
+        if (!id) return;
+        let c = this.state.conversations.find((x) => x.id === id);
+        if (!c) {
+            await this.loadList();
+            c = this.state.conversations.find((x) => x.id === id);
+        }
+        if (c) {
+            this.openConversation(id);
+        }
     },
 
     async loadList() {

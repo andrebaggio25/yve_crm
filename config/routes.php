@@ -83,6 +83,9 @@ return function (Router $router) {
             $router->put('/{id}', 'LeadController@apiUpdate', 'api.leads.update');
             $router->delete('/{id}', 'LeadController@apiDelete', 'api.leads.delete');
             $router->post('/{id}/move-stage', 'LeadController@apiMoveStage', 'api.leads.move');
+            $router->post('/{id}/link-existing', 'LeadController@apiLinkExisting', 'api.leads.link');
+            $router->post('/{id}/accept-entry', 'LeadController@apiAcceptEntry', 'api.leads.accept');
+            $router->post('/{id}/discard-entry', 'LeadController@apiDiscardEntry', 'api.leads.discard');
             $router->post('/{id}/notes', 'LeadController@apiAddNote', 'api.leads.note');
             $router->post('/{id}/followup', 'LeadController@apiLogFollowup', 'api.leads.followup');
             $router->get('/{id}/events', 'LeadController@apiEvents', 'api.leads.events');

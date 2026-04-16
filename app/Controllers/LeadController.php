@@ -11,6 +11,8 @@ use App\Core\TenantContext;
 use App\Helpers\LeadTagHelper;
 use App\Helpers\PhoneHelper;
 use App\Services\Automation\AutomationEngine;
+use App\Services\WhatsApp\ChatService;
+use App\Services\WhatsApp\LidResolverService;
 
 class LeadController
 {
@@ -226,6 +228,25 @@ class LeadController
             );
 
             App::log("Lead criado: {$lead['name']} (ID: {$leadId})");
+
+            if ($phoneNormalized) {
+                try {
+                    LidResolverService::enrichLeadMetadataAfterPhoneCheck(
+                        TenantContext::getEffectiveTenantId(),
+                        (int) $leadId,
+                        (string) $phoneNormalized
+                    );
+                    $lead = TenantAwareDatabase::fetch(
+                        "SELECT l.*, u.name as assigned_user_name 
+                         FROM leads l
+                         LEFT JOIN users u ON l.assigned_user_id = u.id
+                         WHERE l.id = :id AND l.tenant_id = :tenant_id",
+                        TenantAwareDatabase::mergeTenantParams([':id' => $leadId])
+                    );
+                } catch (\Throwable $e) {
+                    App::logError('WhatsApp enrich lead create', $e);
+                }
+            }
 
             try {
                 AutomationEngine::dispatch(TenantContext::getEffectiveTenantId(), 'lead_created', [
@@ -654,16 +675,17 @@ class LeadController
             return;
         }
 
-        // wa.me: usar exatamente o telefone cadastrado/importado (apenas digitos), nao phone_normalized
-        // (evita DDI duplicado em dados legados onde normalized ainda tinha 55 prefixado).
         $waDigits = '';
         if (!empty($lead['phone']) && trim((string) $lead['phone']) !== '') {
             $waDigits = preg_replace('/\D/', '', (string) $lead['phone']);
         } elseif (!empty($lead['phone_normalized'])) {
-            $waDigits = preg_replace('/\D/', '', (string) $lead['phone_normalized']);
+            $pn = (string) $lead['phone_normalized'];
+            if (!str_starts_with($pn, 'lid:')) {
+                $waDigits = preg_replace('/\D/', '', $pn);
+            }
         }
         if ($waDigits === '') {
-            $response->jsonError('Lead nao possui telefone cadastrado', 422);
+            $response->jsonError('Lead nao possui telefone cadastrado valido para envio pela API', 422);
             return;
         }
 
@@ -692,12 +714,23 @@ class LeadController
             );
             $message = $template
                 ? $this->interpolateLeadMessage($template['content'], $lead)
-                : null;  // Sem mensagem quando nao ha template
+                : null;
         }
 
-        $whatsappLink = PhoneHelper::getWhatsAppLink($waDigits, $message);
+        if ($message === null || $message === '') {
+            $response->jsonError('Informe uma mensagem ou selecione um template para enviar pelo WhatsApp', 422);
+            return;
+        }
 
         $user = Session::user();
+
+        $chat = new ChatService();
+        $send = $chat->sendToLead((int) $id, $message, 'user', (int) $user['id']);
+
+        if (!$send['ok']) {
+            $response->jsonError($send['message'] ?? 'Falha ao enviar WhatsApp', 422);
+            return;
+        }
 
         $db = null;
         try {
@@ -711,19 +744,20 @@ class LeadController
                 [':id' => $id]
             );
 
-            $preview = $message ? (mb_strlen($message) > 220 ? mb_substr($message, 0, 220) . '…' : $message) : null;
+            $preview = mb_strlen($message) > 220 ? mb_substr($message, 0, 220) . '…' : $message;
 
             TenantAwareDatabase::insert('lead_events', [
                 'lead_id' => $id,
                 'user_id' => $user['id'],
                 'event_type' => 'whatsapp_trigger',
-                'description' => 'Mensagem WhatsApp preparada' . ($template ? (' — ' . $template['name']) : ''),
+                'description' => 'Mensagem WhatsApp enviada (Evolution)' . ($template ? (' — ' . $template['name']) : ''),
                 'metadata_json' => json_encode([
                     'stage_type' => $lead['stage_type'],
                     'template_id' => $template['id'] ?? null,
                     'template_name' => $template['name'] ?? null,
                     'message_preview' => $preview,
                     'channel' => 'whatsapp',
+                    'via' => 'api',
                 ], JSON_UNESCAPED_UNICODE)
             ]);
 
@@ -755,14 +789,15 @@ class LeadController
 
             $db->commit();
 
-            App::log("WhatsApp trigger para lead {$id}");
+            App::log("WhatsApp trigger API lead {$id} conv=" . ($send['conversation_id'] ?? ''));
 
             $response->jsonSuccess([
-                'whatsapp_link' => $whatsappLink,
+                'conversation_id' => $send['conversation_id'] ?? null,
+                'message_id' => $send['message_id'] ?? null,
                 'message' => $message,
                 'template_id' => $template['id'] ?? null,
                 'template_name' => $template['name'] ?? null,
-            ], 'Contato iniciado');
+            ], 'Mensagem enviada');
         } catch (\Exception $e) {
             if ($db instanceof \PDO && $db->inTransaction()) {
                 $db->rollBack();
@@ -770,6 +805,137 @@ class LeadController
             App::logError('Erro ao processar WhatsApp trigger', $e);
             $response->jsonError('Erro ao processar contato', 500);
         }
+    }
+
+    public function apiLinkExisting(Request $request, Response $response): void
+    {
+        $id = (int) ($request->getParam('id') ?? 0);
+        $body = $request->getJsonInput() ?? [];
+        $targetId = (int) ($body['target_lead_id'] ?? 0);
+        if ($id <= 0 || $targetId <= 0 || $id === $targetId) {
+            $response->jsonError('IDs invalidos', 422);
+            return;
+        }
+
+        $tid = TenantContext::getEffectiveTenantId();
+        $prov = TenantAwareDatabase::fetch(
+            'SELECT * FROM leads WHERE id = :id AND tenant_id = :tenant_id AND deleted_at IS NULL',
+            TenantAwareDatabase::mergeTenantParams([':id' => $id])
+        );
+        if (!$prov) {
+            $response->jsonError('Lead nao encontrado', 404);
+            return;
+        }
+        $pending = (int) ($prov['pending_identity_resolution'] ?? 0) === 1;
+        $pn = (string) ($prov['phone_normalized'] ?? '');
+        if (!$pending && !str_starts_with($pn, 'lid:')) {
+            $response->jsonError('Este lead nao esta na triagem de entrada', 422);
+            return;
+        }
+
+        $user = Session::user();
+        try {
+            LidResolverService::mergeProvisionalIntoReal((int) $tid, $id, $targetId, (int) ($user['id'] ?? 0));
+            $response->jsonSuccess(['merged_into' => $targetId], 'Leads unificados');
+        } catch (\Throwable $e) {
+            App::logError('apiLinkExisting', $e);
+            $response->jsonError('Erro ao unificar leads', 500);
+        }
+    }
+
+    public function apiAcceptEntry(Request $request, Response $response): void
+    {
+        $id = (int) ($request->getParam('id') ?? 0);
+        $body = $request->getJsonInput() ?? [];
+        $phone = isset($body['phone']) ? trim((string) $body['phone']) : '';
+        $name = isset($body['name']) ? trim((string) $body['name']) : '';
+
+        if ($id <= 0 || $phone === '') {
+            $response->jsonError('Telefone obrigatorio', 422);
+            return;
+        }
+
+        if (!PhoneHelper::isValid($phone)) {
+            $response->jsonError('Telefone invalido', 422);
+            return;
+        }
+
+        $phoneNormalized = PhoneHelper::normalize($phone);
+        $tid = TenantContext::getEffectiveTenantId();
+
+        $existing = TenantAwareDatabase::fetch(
+            'SELECT id FROM leads WHERE phone_normalized = :p AND id != :id AND deleted_at IS NULL AND tenant_id = :tenant_id LIMIT 1',
+            TenantAwareDatabase::mergeTenantParams([':p' => $phoneNormalized, ':id' => $id])
+        );
+        if ($existing) {
+            $response->jsonError('Ja existe lead com este telefone. Use vincular.', 422);
+            return;
+        }
+
+        $lead = TenantAwareDatabase::fetch(
+            'SELECT * FROM leads WHERE id = :id AND tenant_id = :tenant_id AND deleted_at IS NULL',
+            TenantAwareDatabase::mergeTenantParams([':id' => $id])
+        );
+        if (!$lead) {
+            $response->jsonError('Lead nao encontrado', 404);
+            return;
+        }
+
+        $update = [
+            'phone' => $phone,
+            'phone_normalized' => $phoneNormalized,
+            'pending_identity_resolution' => 0,
+        ];
+        if ($name !== '') {
+            $update['name'] = $name;
+        }
+
+        TenantAwareDatabase::update('leads', $update, 'id = :id', [':id' => $id]);
+
+        TenantAwareDatabase::query(
+            'UPDATE conversations SET contact_phone = :cp WHERE lead_id = :lid AND tenant_id = :tenant_id',
+            TenantAwareDatabase::mergeTenantParams([':cp' => $phoneNormalized, ':lid' => $id])
+        );
+
+        try {
+            LidResolverService::enrichLeadMetadataAfterPhoneCheck((int) $tid, $id, $phoneNormalized);
+        } catch (\Throwable $e) {
+            App::logError('apiAcceptEntry enrich', $e);
+        }
+
+        $response->jsonSuccess([], 'Lead aceito no pipeline');
+    }
+
+    public function apiDiscardEntry(Request $request, Response $response): void
+    {
+        $id = (int) ($request->getParam('id') ?? 0);
+        if ($id <= 0) {
+            $response->jsonError('ID invalido', 400);
+            return;
+        }
+
+        $lead = TenantAwareDatabase::fetch(
+            'SELECT id FROM leads WHERE id = :id AND tenant_id = :tenant_id AND deleted_at IS NULL',
+            TenantAwareDatabase::mergeTenantParams([':id' => $id])
+        );
+        if (!$lead) {
+            $response->jsonError('Lead nao encontrado', 404);
+            return;
+        }
+
+        TenantAwareDatabase::update(
+            'leads',
+            ['deleted_at' => date('Y-m-d H:i:s')],
+            'id = :id',
+            [':id' => $id]
+        );
+
+        TenantAwareDatabase::query(
+            "UPDATE conversations SET status = 'closed' WHERE lead_id = :lid AND tenant_id = :tenant_id",
+            TenantAwareDatabase::mergeTenantParams([':lid' => $id])
+        );
+
+        $response->jsonSuccess([], 'Lead descartado');
     }
 
     /**

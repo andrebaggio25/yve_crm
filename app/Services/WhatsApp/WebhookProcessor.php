@@ -7,6 +7,7 @@ use App\Core\App;
 use App\Helpers\DebugAgentLog;
 use App\Helpers\PhoneHelper;
 use App\Services\Automation\AutomationEngine;
+use App\Services\WhatsApp\LidResolverService;
 
 /**
  * Processa webhooks da Evolution API (mensagens recebidas, etc.).
@@ -111,7 +112,7 @@ class WebhookProcessor
         $key = $msg['key'] ?? [];
         $fromMe = !empty($key['fromMe']);
         if ($fromMe) {
-            App::log('[WebhookProcessor] processOneMessage: ignorando fromMe=true');
+            $this->processOutboundFromWebhook($msg, $tenantId, $whatsappInstanceId, $eventName);
 
             return;
         }
@@ -151,65 +152,28 @@ class WebhookProcessor
         );
         $instancePhoneNorm = PhoneHelper::normalize((string) ($instRow['phone_number'] ?? ''));
 
-        $resolved = $this->resolveContactFromKey($key, $instancePhoneNorm !== '' ? $instancePhoneNorm : null);
+        $senderPn = (string) ($msg['senderPn'] ?? '');
+        $resolved = $this->resolveContactFromKey($key, $instancePhoneNorm !== '' ? $instancePhoneNorm : null, $senderPn);
         if ($resolved === null) {
             return;
         }
 
-        // Tenta resolver LID → telefone via Evolution API (contacts lookup)
-        if (!empty($resolved['lid_only'])) {
-            $apiUrl  = (string) ($instRow['api_url']      ?? '');
-            $apiKey  = (string) ($instRow['api_key']      ?? '');
-            $instNm  = (string) ($instRow['instance_name'] ?? '');
-            $lidJid  = (string) ($resolved['wa_meta']['wa_remote_jid'] ?? '');
-
-            if ($apiUrl !== '' && $apiKey !== '' && $lidJid !== '') {
-                $evo = new EvolutionApiService();
-                $contactRes = $evo->fetchContactByJid($apiUrl, $apiKey, $instNm, $lidJid);
-
-                // #region agent log
-                DebugAgentLog::write('FETCH_CONTACT', 'WebhookProcessor::processOneMessage', 'fetchContactByJid LID', [
-                    'http'         => $contactRes['http'],
-                    'ok'           => $contactRes['ok'],
-                    'raw_preview'  => mb_substr((string) ($contactRes['raw'] ?? ''), 0, 600),
-                    'body_is_arr'  => is_array($contactRes['body']),
-                    'body_keys'    => is_array($contactRes['body']) ? array_keys($contactRes['body']) : null,
-                    'lid_jid'      => DebugAgentLog::maskRecipient($lidJid),
-                ]);
-                // #endregion
-
-                $phoneJid = EvolutionApiService::extractPhoneJidFromContacts($contactRes['body']);
-                if ($phoneJid !== '') {
-                    $localPart  = explode('@', $phoneJid)[0] ?? '';
-                    $realDigits = preg_replace('/\D/', '', $localPart) ?: $localPart;
-                    $realNorm   = PhoneHelper::normalize($realDigits) ?: $realDigits;
-
-                    // #region agent log
-                    DebugAgentLog::write('FETCH_CONTACT_RESOLVED', 'WebhookProcessor::processOneMessage', 'LID resolvido para telefone', [
-                        'phone_jid' => DebugAgentLog::maskRecipient($phoneJid),
-                        'norm_len'  => strlen($realNorm),
-                    ]);
-                    // #endregion
-
-                    $resolved['digits']                          = $realDigits;
-                    $resolved['normalized']                      = $realNorm;
-                    $resolved['lid_only']                        = false;
-                    $resolved['wa_meta']['wa_remote_jid_alt']    = $phoneJid;
-                    $resolved['wa_meta']['wa_last_send_number']  = $realDigits;
-                    unset($resolved['wa_meta']['wa_lid_only']);
-                } else {
-                    // #region agent log
-                    DebugAgentLog::write('FETCH_CONTACT_NO_PHONE', 'WebhookProcessor::processOneMessage', 'sem telefone no contato LID', [
-                        'http'      => $contactRes['http'],
-                        'lid_jid'   => DebugAgentLog::maskRecipient($lidJid),
-                    ]);
-                    // #endregion
-                }
-            }
-        }
+        $this->applyLidResolutionPipeline($resolved, $tenantId, $instRow);
 
         $digits = $resolved['digits'];
         $normalized = $resolved['normalized'];
+        $remoteJidFullEarly = (string) ($key['remoteJid'] ?? '');
+        if ($remoteJidFullEarly !== '' && str_ends_with($remoteJidFullEarly, '@lid') && !str_starts_with($normalized, 'lid:')) {
+            LidResolverService::storeMapping(
+                $tenantId,
+                $remoteJidFullEarly,
+                $normalized,
+                isset($resolved['wa_meta']['wa_remote_jid_alt']) ? (string) $resolved['wa_meta']['wa_remote_jid_alt'] : null,
+                'webhook_inbound'
+            );
+            LidResolverService::reconcileLeadsOnMapping($tenantId, $remoteJidFullEarly, $normalized);
+        }
+
         $waMetaJson = json_encode($resolved['wa_meta'], JSON_UNESCAPED_UNICODE);
         App::log("[WebhookProcessor] processOneMessage: phone={$normalized} event={$eventName} is_group=" . ($resolved['is_group'] ? '1' : '0'));
 
@@ -321,7 +285,8 @@ class WebhookProcessor
                     $tenantId,
                     $lidOnly ? $normalized : $digits,
                     $pushName,
-                    $lidOnly
+                    $lidOnly,
+                    $remoteJidFull !== '' ? $remoteJidFull : null
                 );
             }
         }
@@ -398,15 +363,259 @@ class WebhookProcessor
     }
 
     /**
+     * Cache local + Evolution findContacts para LID-only.
+     *
+     * @param array{digits: string, normalized: string, is_group: bool, wa_meta: array<string, mixed>, lid_only?: bool} $resolved
+     * @param array<string, mixed> $instRow
+     */
+    private function applyLidResolutionPipeline(array &$resolved, int $tenantId, array $instRow): void
+    {
+        if (empty($resolved['lid_only'])) {
+            return;
+        }
+
+        $lidJid = (string) ($resolved['wa_meta']['wa_remote_jid'] ?? '');
+        if ($lidJid !== '') {
+            $mapped = LidResolverService::getMappingByLid($tenantId, $lidJid);
+            if ($mapped && !empty($mapped['phone_normalized'])) {
+                $realNorm = (string) $mapped['phone_normalized'];
+                if ($realNorm !== '' && !str_starts_with($realNorm, 'lid:')) {
+                    $resolved['digits'] = preg_replace('/\D/', '', $realNorm) ?: $realNorm;
+                    $resolved['normalized'] = PhoneHelper::normalize($resolved['digits']) ?: $realNorm;
+                    $resolved['lid_only'] = false;
+                    $resolved['wa_meta']['wa_remote_jid_alt'] = $mapped['phone_jid'] ?? $resolved['wa_meta']['wa_remote_jid_alt'] ?? null;
+                    $resolved['wa_meta']['wa_last_send_number'] = $resolved['digits'];
+                    unset($resolved['wa_meta']['wa_lid_only']);
+
+                    return;
+                }
+            }
+        }
+
+        $apiUrl = (string) ($instRow['api_url'] ?? '');
+        $apiKey = (string) ($instRow['api_key'] ?? '');
+        $instNm = (string) ($instRow['instance_name'] ?? '');
+
+        if ($apiUrl !== '' && $apiKey !== '' && $lidJid !== '') {
+            $evo = new EvolutionApiService();
+            $contactRes = $evo->fetchContactByJid($apiUrl, $apiKey, $instNm, $lidJid);
+
+            DebugAgentLog::write('FETCH_CONTACT', 'WebhookProcessor::applyLidResolutionPipeline', 'fetchContactByJid LID', [
+                'http' => $contactRes['http'],
+                'ok' => $contactRes['ok'],
+                'raw_preview' => mb_substr((string) ($contactRes['raw'] ?? ''), 0, 600),
+                'lid_jid' => DebugAgentLog::maskRecipient($lidJid),
+            ]);
+
+            $phoneJid = EvolutionApiService::extractPhoneJidFromContacts($contactRes['body']);
+            if ($phoneJid !== '') {
+                $localPart = explode('@', $phoneJid)[0] ?? '';
+                $realDigits = preg_replace('/\D/', '', $localPart) ?: $localPart;
+                $realNorm = PhoneHelper::normalize($realDigits) ?: $realDigits;
+
+                DebugAgentLog::write('FETCH_CONTACT_RESOLVED', 'WebhookProcessor::applyLidResolutionPipeline', 'LID resolvido para telefone', [
+                    'phone_jid' => DebugAgentLog::maskRecipient($phoneJid),
+                    'norm_len' => strlen($realNorm),
+                ]);
+
+                $resolved['digits'] = $realDigits;
+                $resolved['normalized'] = $realNorm;
+                $resolved['lid_only'] = false;
+                $resolved['wa_meta']['wa_remote_jid_alt'] = $phoneJid;
+                $resolved['wa_meta']['wa_last_send_number'] = $realDigits;
+                unset($resolved['wa_meta']['wa_lid_only']);
+
+                LidResolverService::storeMapping($tenantId, $lidJid, $realNorm, $phoneJid, 'find_contacts');
+            } else {
+                DebugAgentLog::write('FETCH_CONTACT_NO_PHONE', 'WebhookProcessor::applyLidResolutionPipeline', 'sem telefone no contato LID', [
+                    'http' => $contactRes['http'],
+                    'lid_jid' => DebugAgentLog::maskRecipient($lidJid),
+                ]);
+            }
+        }
+    }
+
+    private function processOutboundFromWebhook(array $msg, int $tenantId, int $whatsappInstanceId, string $eventName = ''): void
+    {
+        $key = $msg['key'] ?? [];
+        $waMsgId = (string) ($key['id'] ?? '');
+        if ($waMsgId !== '') {
+            $dup = Database::fetch(
+                'SELECT id FROM messages WHERE tenant_id = :tid AND whatsapp_message_id = :w LIMIT 1',
+                [':tid' => $tenantId, ':w' => $waMsgId]
+            );
+            if ($dup) {
+                Database::query(
+                    'UPDATE messages SET status = \'sent\' WHERE id = :id AND tenant_id = :tid AND status = \'pending\'',
+                    [':id' => (int) $dup['id'], ':tid' => $tenantId]
+                );
+                App::log('[WebhookProcessor] outbound webhook dedup id=' . $dup['id']);
+
+                return;
+            }
+        }
+
+        $instRow = Database::fetch(
+            'SELECT phone_number, api_url, api_key, instance_name FROM whatsapp_instances WHERE id = :wid AND tenant_id = :tid LIMIT 1',
+            [':wid' => $whatsappInstanceId, ':tid' => $tenantId]
+        );
+        $instancePhoneNorm = PhoneHelper::normalize((string) ($instRow['phone_number'] ?? ''));
+        $senderPn = (string) ($msg['senderPn'] ?? '');
+        $resolved = $this->resolveContactFromKey($key, $instancePhoneNorm !== '' ? $instancePhoneNorm : null, $senderPn);
+        if ($resolved === null) {
+            return;
+        }
+
+        $this->applyLidResolutionPipeline($resolved, $tenantId, $instRow);
+
+        $normalized = $resolved['normalized'];
+        $remoteFull = (string) ($key['remoteJid'] ?? '');
+        if ($remoteFull !== '' && str_ends_with($remoteFull, '@lid') && !str_starts_with($normalized, 'lid:')) {
+            LidResolverService::storeMapping(
+                $tenantId,
+                $remoteFull,
+                $normalized,
+                isset($resolved['wa_meta']['wa_remote_jid_alt']) ? (string) $resolved['wa_meta']['wa_remote_jid_alt'] : null,
+                'webhook_outbound'
+            );
+            LidResolverService::reconcileLeadsOnMapping($tenantId, $remoteFull, $normalized);
+        }
+
+        $waMetaJson = json_encode($resolved['wa_meta'], JSON_UNESCAPED_UNICODE);
+
+        $messageBlock = $msg['message'] ?? [];
+        $text = '';
+        $type = 'text';
+        $mediaUrl = null;
+        $mime = null;
+        $filename = null;
+
+        if (isset($messageBlock['conversation'])) {
+            $text = (string) $messageBlock['conversation'];
+        } elseif (isset($messageBlock['extendedTextMessage']['text'])) {
+            $text = (string) $messageBlock['extendedTextMessage']['text'];
+        } elseif (isset($messageBlock['imageMessage'])) {
+            $type = 'image';
+            $im = $messageBlock['imageMessage'];
+            $text = (string) ($im['caption'] ?? '');
+            $mediaUrl = isset($im['url']) ? (string) $im['url'] : null;
+            $mime = isset($im['mimetype']) ? (string) $im['mimetype'] : null;
+        } elseif (isset($messageBlock['audioMessage'])) {
+            $type = 'audio';
+            $am = $messageBlock['audioMessage'];
+            $mediaUrl = isset($am['url']) ? (string) $am['url'] : null;
+            $mime = isset($am['mimetype']) ? (string) $am['mimetype'] : null;
+        } elseif (isset($messageBlock['documentMessage'])) {
+            $type = 'document';
+            $dm = $messageBlock['documentMessage'];
+            $text = (string) ($dm['caption'] ?? '');
+            $mediaUrl = isset($dm['url']) ? (string) $dm['url'] : null;
+            $mime = isset($dm['mimetype']) ? (string) $dm['mimetype'] : null;
+            $filename = isset($dm['fileName']) ? (string) $dm['fileName'] : null;
+        }
+
+        $isLidKey = str_starts_with($normalized, 'lid:');
+        $lead = null;
+        if ($isLidKey && $remoteFull !== '' && !$resolved['is_group']) {
+            $lead = Database::fetch(
+                'SELECT id FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL
+                 AND JSON_UNQUOTE(JSON_EXTRACT(metadata_json, \'$.whatsapp_jid\')) = :jid
+                 LIMIT 1',
+                [':tid' => $tenantId, ':jid' => $remoteFull]
+            );
+        }
+        if (!$lead) {
+            $lead = Database::fetch(
+                'SELECT id FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL AND phone_normalized = :p LIMIT 1',
+                [':tid' => $tenantId, ':p' => $normalized]
+            );
+        }
+        $leadId = $lead ? (int) $lead['id'] : null;
+
+        $conv = Database::fetch(
+            'SELECT id, metadata_json FROM conversations WHERE tenant_id = :tid AND whatsapp_instance_id = :wid AND contact_phone = :phone LIMIT 1',
+            [':tid' => $tenantId, ':wid' => $whatsappInstanceId, ':phone' => $normalized]
+        );
+
+        if (!$conv) {
+            Database::query(
+                'INSERT INTO conversations (tenant_id, lead_id, whatsapp_instance_id, contact_phone, status, last_message_at, last_message_preview, unread_count, metadata_json)
+                 VALUES (:tid, :lid, :wid, :phone, \'open\', NOW(), :preview, 0, :meta)',
+                [
+                    ':tid' => $tenantId,
+                    ':lid' => $leadId,
+                    ':wid' => $whatsappInstanceId,
+                    ':phone' => $normalized,
+                    ':preview' => mb_substr($text ?: '[' . $type . ']', 0, 200),
+                    ':meta' => $waMetaJson,
+                ]
+            );
+            $convId = (int) Database::getInstance()->lastInsertId();
+        } else {
+            $convId = (int) $conv['id'];
+            $mergedMeta = $this->mergeConversationMetadata($conv['metadata_json'] ?? null, $resolved['wa_meta']);
+            Database::query(
+                'UPDATE conversations SET lead_id = COALESCE(lead_id, :lid), last_message_at = NOW(), last_message_preview = :preview, metadata_json = :meta WHERE id = :id AND tenant_id = :tid',
+                [
+                    ':id' => $convId,
+                    ':tid' => $tenantId,
+                    ':lid' => $leadId,
+                    ':preview' => mb_substr($text ?: '[' . $type . ']', 0, 200),
+                    ':meta' => json_encode($mergedMeta, JSON_UNESCAPED_UNICODE),
+                ]
+            );
+        }
+
+        Database::query(
+            'INSERT INTO messages (tenant_id, conversation_id, whatsapp_message_id, direction, sender_type, type, content, media_url, media_mime_type, media_filename, status, metadata_json)
+             VALUES (:tid, :cid, :wmid, \'outbound\', \'system\', :typ, :content, :murl, :mime, :fname, \'sent\', :meta)',
+            [
+                ':tid' => $tenantId,
+                ':cid' => $convId,
+                ':wmid' => $waMsgId ?: null,
+                ':typ' => $type,
+                ':content' => $text ?: null,
+                ':murl' => $mediaUrl,
+                ':mime' => $mime,
+                ':fname' => $filename,
+                ':meta' => json_encode(['raw_event' => $eventName ?: 'messages', 'from_webhook' => true], JSON_UNESCAPED_UNICODE),
+            ]
+        );
+
+        App::log("[WebhookProcessor] mensagem outbound gravada conv={$convId} lead_id=" . ($leadId ?? 'null'));
+    }
+
+    /**
      * Resolve telefone E.164 e metadados para envio (LID + remoteJidAlt, grupos @g.us).
      *
      * @return array{digits: string, normalized: string, is_group: bool, wa_meta: array<string, mixed>, lid_only?: bool}|null
      */
-    private function resolveContactFromKey(array $key, ?string $instancePhoneNorm = null): ?array
+    private function resolveContactFromKey(array $key, ?string $instancePhoneNorm = null, string $senderPn = ''): ?array
     {
         $remoteJid = (string) ($key['remoteJid'] ?? '');
         $remoteJidAlt = (string) ($key['remoteJidAlt'] ?? '');
         $participant = (string) ($key['participant'] ?? '');
+
+        $senderPn = trim($senderPn);
+        if ($senderPn !== '' && $remoteJid !== '' && str_ends_with($remoteJid, '@lid')) {
+            $pnDigits = PhoneHelper::normalize($senderPn) ?: preg_replace('/\D/', '', $senderPn);
+            if ($pnDigits !== '' && ($instancePhoneNorm === null || $instancePhoneNorm === '' || $pnDigits !== $instancePhoneNorm)) {
+                $normalizedPn = PhoneHelper::normalize($pnDigits) ?: $pnDigits;
+
+                return [
+                    'digits' => $pnDigits,
+                    'normalized' => $normalizedPn,
+                    'is_group' => false,
+                    'lid_only' => false,
+                    'wa_meta' => [
+                        'wa_remote_jid' => $remoteJid,
+                        'wa_remote_jid_alt' => $remoteJidAlt !== '' ? $remoteJidAlt : null,
+                        'wa_last_send_number' => $pnDigits,
+                        'wa_is_group' => false,
+                    ],
+                ];
+            }
+        }
 
         $isPhoneJid = static function (string $jid): bool {
             return $jid !== '' && (str_ends_with($jid, '@s.whatsapp.net') || str_ends_with($jid, '@c.us'));
@@ -597,7 +806,7 @@ class WebhookProcessor
     /**
      * @param string $digits E.164 sem + ou chave sintetica `lid:<local>` quando $lidOnly
      */
-    private function createInboundLead(int $tenantId, string $digits, string $pushName, bool $lidOnly = false): int
+    private function createInboundLead(int $tenantId, string $digits, string $pushName, bool $lidOnly = false, ?string $whatsappJid = null): int
     {
         $pipe = Database::fetch(
             'SELECT id FROM pipelines WHERE tenant_id = :tid AND is_default = 1 LIMIT 1',
@@ -626,9 +835,16 @@ class WebhookProcessor
         $phoneVal = $lidOnly ? null : $digits;
         $pnVal = $lidOnly ? $digits : (PhoneHelper::normalize($digits) ?: $digits);
 
+        $meta = [];
+        if ($whatsappJid !== null && $whatsappJid !== '') {
+            $meta['whatsapp_jid'] = $whatsappJid;
+        }
+        $metaJson = $meta !== [] ? json_encode($meta, JSON_UNESCAPED_UNICODE) : null;
+        $pending = $lidOnly ? 1 : 0;
+
         Database::query(
-            'INSERT INTO leads (tenant_id, pipeline_id, stage_id, name, phone, phone_normalized, source, status, score, temperature)
-             VALUES (:tid, :pid, :sid, :name, :phone, :pn, \'whatsapp\', \'active\', 0, \'warm\')',
+            'INSERT INTO leads (tenant_id, pipeline_id, stage_id, name, phone, phone_normalized, source, status, score, temperature, metadata_json, pending_identity_resolution)
+             VALUES (:tid, :pid, :sid, :name, :phone, :pn, \'whatsapp\', \'active\', 0, \'warm\', :meta, :pending)',
             [
                 ':tid' => $tenantId,
                 ':pid' => $pipelineId,
@@ -636,6 +852,8 @@ class WebhookProcessor
                 ':name' => $name,
                 ':phone' => $phoneVal,
                 ':pn' => $pnVal,
+                ':meta' => $metaJson,
+                ':pending' => $pending,
             ]
         );
 

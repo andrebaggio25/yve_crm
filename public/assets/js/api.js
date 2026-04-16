@@ -129,6 +129,18 @@ const API = {
             return API.post(`/api/leads/${id}/whatsapp-trigger`, data);
         },
 
+        linkExisting(provisionalId, targetLeadId) {
+            return API.post(`/api/leads/${provisionalId}/link-existing`, { target_lead_id: targetLeadId });
+        },
+
+        acceptEntry(id, data) {
+            return API.post(`/api/leads/${id}/accept-entry`, data);
+        },
+
+        discardEntry(id) {
+            return API.post(`/api/leads/${id}/discard-entry`, {});
+        },
+
         importParse(file) {
             const formData = new FormData();
             formData.append('file', file);

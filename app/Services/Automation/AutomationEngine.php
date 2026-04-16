@@ -5,7 +5,8 @@ namespace App\Services\Automation;
 use App\Core\App;
 use App\Core\Database;
 use App\Helpers\PhoneHelper;
-use App\Services\WhatsApp\EvolutionApiService;
+use App\Services\WhatsApp\ChatService;
+use App\Core\TenantContext;
 
 class AutomationEngine
 {
@@ -460,16 +461,22 @@ class AutomationEngine
         $message = str_replace('{{nome}}', $lead['name'] ?? 'Cliente', $message);
         $message = str_replace('{{name}}', $lead['name'] ?? 'Cliente', $message);
 
-        // Enviar
         try {
-            $evo = new EvolutionApiService();
-            $evo->sendText(
-                $instance['api_url'],
-                $instance['api_key'],
-                $instance['instance_name'],
-                PhoneHelper::normalize($phone) ?: $phone,
-                $message
-            );
+            $hadCtx = TenantContext::hasTenant();
+            if (!$hadCtx) {
+                TenantContext::setTenant($tenantId, ['id' => $tenantId]);
+            }
+            try {
+                $chat = new ChatService();
+                $out = $chat->sendToLead($leadId, $message, 'bot', null);
+                if (!$out['ok']) {
+                    App::logError('WhatsApp automation send: ' . ($out['message'] ?? 'fail'));
+                }
+            } finally {
+                if (!$hadCtx) {
+                    TenantContext::clear();
+                }
+            }
         } catch (\Throwable $e) {
             App::logError('WhatsApp automation send', $e);
         }

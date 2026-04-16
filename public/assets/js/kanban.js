@@ -14,6 +14,7 @@ const Kanban = {
         const page = document.querySelector('.kanban-page');
         this.pipelineId = page?.dataset.pipelineId ? parseInt(page.dataset.pipelineId, 10) : 1;
         this.bindEvents();
+        this.initEntryTriagemUi();
         this.initDragAndDrop();
         this.initLeadDetailKeyboard();
         this.loadUsers();
@@ -62,6 +63,10 @@ const Kanban = {
         root.addEventListener('dragstart', (e) => {
             const card = e.target.closest('.kanban-card');
             if (!card) return;
+            if (card.getAttribute('data-no-drag') === '1') {
+                e.preventDefault();
+                return;
+            }
             const id = card.getAttribute('data-lead-id');
             if (!id) return;
             e.dataTransfer.setData('text/plain', id);
@@ -83,6 +88,11 @@ const Kanban = {
             if (!this._dragLeadId) return;
             const col = e.target.closest('[data-kanban-column]');
             if (!col) return;
+            if (col.getAttribute('data-kanban-no-drop') === '1') {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'none';
+                return;
+            }
             e.preventDefault();
             e.dataTransfer.dropEffect = 'move';
             root.querySelectorAll('[data-kanban-column].kanban-dnd-active').forEach((el) => {
@@ -102,6 +112,12 @@ const Kanban = {
         root.addEventListener('drop', async (e) => {
             const col = e.target.closest('[data-kanban-column]');
             if (!col || !this._dragLeadId) return;
+            if (col.getAttribute('data-kanban-no-drop') === '1') {
+                e.preventDefault();
+                this.clearColumnDropStyle(col);
+                App.toast('Use Vincular ou Aceitar na coluna Leads de Entrada', 'info');
+                return;
+            }
             e.preventDefault();
             this.clearColumnDropStyle(col);
             const stageId = col.getAttribute('data-stage-id');
@@ -135,6 +151,213 @@ const Kanban = {
 
     clearColumnDropStyle(el) {
         el.classList.remove('kanban-dnd-active', 'ring-2', 'ring-primary-400', 'ring-offset-2', 'bg-primary-50/60');
+    },
+
+    initEntryTriagemUi() {
+        const page = document.querySelector('.kanban-page');
+        if (!page || page.dataset.entryUiBound === '1') return;
+        page.dataset.entryUiBound = '1';
+
+        page.addEventListener('click', async (e) => {
+            const link = e.target.closest('.entry-btn-link');
+            if (link) {
+                e.preventDefault();
+                e.stopPropagation();
+                const id = parseInt(link.getAttribute('data-lead-id'), 10);
+                if (id) this.openEntryLinkModal(id);
+                return;
+            }
+            const acc = e.target.closest('.entry-btn-accept');
+            if (acc) {
+                e.preventDefault();
+                e.stopPropagation();
+                const id = parseInt(acc.getAttribute('data-lead-id'), 10);
+                if (id) await this.openEntryAcceptModal(id);
+                return;
+            }
+            const disc = e.target.closest('.entry-btn-discard');
+            if (disc) {
+                e.preventDefault();
+                e.stopPropagation();
+                const id = parseInt(disc.getAttribute('data-lead-id'), 10);
+                if (id) await this.confirmDiscardEntry(id);
+                return;
+            }
+        });
+
+        document.querySelectorAll('[data-entry-link-close]').forEach((b) =>
+            b.addEventListener('click', () => this.closeEntryLinkModal())
+        );
+        document.getElementById('entry-link-modal')?.addEventListener('click', (e) => {
+            if (e.target.id === 'entry-link-modal') this.closeEntryLinkModal();
+        });
+
+        document.getElementById('entry-link-search-btn')?.addEventListener('click', () => this.runEntryLinkSearch());
+        document.getElementById('entry-link-search')?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                this.runEntryLinkSearch();
+            }
+        });
+
+        document.querySelectorAll('[data-entry-accept-close]').forEach((b) =>
+            b.addEventListener('click', () => this.closeEntryAcceptModal())
+        );
+        document.getElementById('entry-accept-modal')?.addEventListener('click', (e) => {
+            if (e.target.id === 'entry-accept-modal') this.closeEntryAcceptModal();
+        });
+
+        document.getElementById('entry-accept-form')?.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            await this.submitEntryAccept();
+        });
+    },
+
+    openEntryLinkModal(provisionalId) {
+        this._entryLinkProvisionalId = provisionalId;
+        const m = document.getElementById('entry-link-modal');
+        const inp = document.getElementById('entry-link-search');
+        const ul = document.getElementById('entry-link-results');
+        if (inp) inp.value = '';
+        if (ul) ul.innerHTML = '';
+        if (m) {
+            m.classList.remove('hidden');
+            m.classList.add('flex');
+        }
+        inp?.focus();
+    },
+
+    closeEntryLinkModal() {
+        this._entryLinkProvisionalId = null;
+        const m = document.getElementById('entry-link-modal');
+        m?.classList.add('hidden');
+        m?.classList.remove('flex');
+    },
+
+    async runEntryLinkSearch() {
+        const q = document.getElementById('entry-link-search')?.value?.trim() || '';
+        const ul = document.getElementById('entry-link-results');
+        if (!ul) return;
+        if (q.length < 2) {
+            App.toast('Digite pelo menos 2 caracteres', 'warning');
+            return;
+        }
+        try {
+            const res = await API.leads.list({ search: q, limit: 15 });
+            const leads = res.data?.leads || [];
+            const pid = this._entryLinkProvisionalId;
+            ul.innerHTML = leads
+                .filter((l) => l.id !== pid)
+                .map(
+                    (l) =>
+                        `<li class="rounded-lg border border-slate-100 p-2 hover:bg-slate-50">
+                            <button type="button" class="entry-link-pick w-full text-left text-sm" data-target-id="${l.id}">
+                                <span class="font-medium text-slate-900">${this.escapeHtml(l.name)}</span>
+                                <span class="mt-0.5 block text-xs text-slate-500">${this.escapeHtml(
+                                    String(l.phone || l.phone_normalized || '')
+                                )} · ${this.escapeHtml(l.stage_name || '')}</span>
+                            </button>
+                        </li>`
+                )
+                .join('');
+            ul.querySelectorAll('.entry-link-pick').forEach((btn) => {
+                btn.addEventListener('click', async () => {
+                    const tid = parseInt(btn.getAttribute('data-target-id'), 10);
+                    await this.submitEntryLink(tid);
+                });
+            });
+        } catch (err) {
+            console.error(err);
+            App.toast('Erro na busca', 'error');
+        }
+    },
+
+    async submitEntryLink(targetLeadId) {
+        const pid = this._entryLinkProvisionalId;
+        if (!pid) return;
+        try {
+            const res = await API.leads.linkExisting(pid, targetLeadId);
+            if (res.success) {
+                App.toast(res.message || 'Leads unificados', 'success');
+                this.closeEntryLinkModal();
+                await this.loadData();
+            } else {
+                App.toast(res.message || 'Nao foi possivel vincular', 'error');
+            }
+        } catch (e) {
+            console.error(e);
+            App.toast(e.data?.message || e.message || 'Erro ao vincular', 'error');
+        }
+    },
+
+    async openEntryAcceptModal(provisionalId) {
+        this._entryAcceptProvisionalId = provisionalId;
+        const m = document.getElementById('entry-accept-modal');
+        const nameEl = document.getElementById('entry-accept-name');
+        const phoneEl = document.getElementById('entry-accept-phone');
+        if (phoneEl) phoneEl.value = '';
+        let name = '';
+        try {
+            const res = await API.leads.get(provisionalId);
+            if (res.success && res.data?.lead) {
+                name = res.data.lead.name || '';
+            }
+        } catch (e) {
+            /* ignore */
+        }
+        if (nameEl) nameEl.value = name;
+        if (m) {
+            m.classList.remove('hidden');
+            m.classList.add('flex');
+        }
+        phoneEl?.focus();
+    },
+
+    closeEntryAcceptModal() {
+        this._entryAcceptProvisionalId = null;
+        const m = document.getElementById('entry-accept-modal');
+        m?.classList.add('hidden');
+        m?.classList.remove('flex');
+    },
+
+    async submitEntryAccept() {
+        const id = this._entryAcceptProvisionalId;
+        if (!id) return;
+        const name = document.getElementById('entry-accept-name')?.value?.trim() || '';
+        const phone = document.getElementById('entry-accept-phone')?.value?.trim() || '';
+        if (!phone) {
+            App.toast('Telefone obrigatorio', 'warning');
+            return;
+        }
+        try {
+            const res = await API.leads.acceptEntry(id, { phone, name: name || undefined });
+            if (res.success) {
+                App.toast(res.message || 'Lead aceito', 'success');
+                this.closeEntryAcceptModal();
+                await this.loadData();
+            } else {
+                App.toast(res.message || 'Nao foi possivel aceitar', 'error');
+            }
+        } catch (e) {
+            console.error(e);
+            App.toast(e.data?.message || e.message || 'Erro ao salvar', 'error');
+        }
+    },
+
+    async confirmDiscardEntry(id) {
+        if (!confirm('Descartar este lead de entrada? A conversa sera encerrada.')) return;
+        try {
+            const res = await API.leads.discardEntry(id);
+            if (res.success) {
+                App.toast(res.message || 'Lead descartado', 'success');
+                await this.loadData();
+            } else {
+                App.toast(res.message || 'Nao foi possivel descartar', 'error');
+            }
+        } catch (e) {
+            console.error(e);
+            App.toast(e.data?.message || e.message || 'Erro ao descartar', 'error');
+        }
     },
 
     initLeadModal() {
@@ -302,6 +525,7 @@ const Kanban = {
 
         this.columns.forEach((column) => {
             let leads = column.leads;
+            const isEntryColumn = column.stage?.stage_type === 'entry';
 
             if (search) {
                 const searchLower = search.toLowerCase();
@@ -324,6 +548,7 @@ const Kanban = {
             const colEl = this.createColumn(column.stage, leads, sumVisible, {
                 totalInStage,
                 clientFilter,
+                isEntryColumn,
             });
             board.appendChild(colEl);
         });
@@ -331,15 +556,20 @@ const Kanban = {
 
     createColumn(stage, leads, totalValue, meta = {}) {
         const column = document.createElement('div');
+        const isEntry = !!meta.isEntryColumn;
         column.className =
-            'kanban-column flex w-[300px] shrink-0 flex-col rounded-xl bg-slate-100 max-h-full transition-[box-shadow] duration-150 sm:w-[320px]';
+            'kanban-column flex w-[300px] shrink-0 flex-col rounded-xl bg-slate-100 max-h-full transition-[box-shadow] duration-150 sm:w-[320px]' +
+            (isEntry ? ' ring-2 ring-amber-400/80 ring-offset-2 ring-offset-slate-50' : '');
         column.setAttribute('data-kanban-column', '1');
         column.setAttribute('data-stage-id', String(stage.id));
+        if (isEntry) {
+            column.setAttribute('data-kanban-no-drop', '1');
+        }
 
         const totalInStage = meta.totalInStage ?? leads.length;
         const badge = meta.clientFilter ? `${leads.length} visiveis` : `${totalInStage}`;
 
-        const cardsHtml = leads.map((lead) => this.renderLeadCard(lead, stage.id)).join('');
+        const cardsHtml = leads.map((lead) => this.renderLeadCard(lead, stage.id, { isEntryColumn: isEntry })).join('');
 
         column.innerHTML = `
             <div class="flex shrink-0 items-center justify-between border-b border-slate-200/80 px-3 py-3">
@@ -365,16 +595,46 @@ const Kanban = {
         return column;
     },
 
-    renderLeadCard(lead, stageId) {
-        const isOverdue = lead.next_action_at && new Date(lead.next_action_at) < new Date();
+    renderLeadCard(lead, stageId, cardMeta = {}) {
+        const isEntry = !!cardMeta.isEntryColumn;
+        const isOverdue = !isEntry && lead.next_action_at && new Date(lead.next_action_at) < new Date();
         const cardClasses = [
             'kanban-card rounded-lg border border-slate-200 bg-white p-3 shadow-sm transition hover:border-primary-300 hover:shadow-md',
-            'cursor-grab active:cursor-grabbing select-none',
+            isEntry ? 'select-none' : 'cursor-grab active:cursor-grabbing select-none',
         ];
         if (isOverdue) cardClasses.push('border-l-4 border-l-red-500');
-        if (lead.temperature === 'hot') cardClasses.push('border-l-4 border-l-amber-500');
+        if (!isEntry && lead.temperature === 'hot') cardClasses.push('border-l-4 border-l-amber-500');
+        if (isEntry) cardClasses.push('border-amber-200 bg-amber-50/40');
 
-        const hasWa = !!(lead.phone_normalized || (lead.phone && String(lead.phone).replace(/\D/g, '').length >= 8));
+        let waStatusPill = '';
+        if (!isEntry) {
+            try {
+                const meta = lead.metadata_json
+                    ? typeof lead.metadata_json === 'string'
+                        ? JSON.parse(lead.metadata_json)
+                        : lead.metadata_json
+                    : {};
+                if (Number(lead.pending_identity_resolution) === 1) {
+                    waStatusPill =
+                        '<span class="mt-1 inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 ring-1 ring-amber-200 bg-amber-50">Aguardando vinculacao</span>';
+                } else if (meta.whatsapp_status === 'not_found') {
+                    waStatusPill =
+                        '<span class="mt-1 inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold text-red-700 ring-1 ring-red-200 bg-red-50">Sem WhatsApp</span>';
+                } else if (meta.whatsapp_jid) {
+                    waStatusPill =
+                        '<span class="mt-1 inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-200 bg-emerald-50">WA ok</span>';
+                }
+            } catch (err) {
+                /* ignore */
+            }
+        } else {
+            waStatusPill =
+                '<span class="mt-1 inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 ring-1 ring-amber-200 bg-amber-100">Triagem</span>';
+        }
+
+        const hasWa =
+            !isEntry &&
+            !!(lead.phone_normalized || (lead.phone && String(lead.phone).replace(/\D/g, '').length >= 8));
 
         const tags = lead.tag_labels
             ? lead.tag_labels
@@ -403,6 +663,19 @@ const Kanban = {
             ? `<div class="mt-1 line-clamp-2 text-[11px] leading-snug text-slate-600" title="${this.escapeHtml(lead.product_interest)}">Prod.: ${this.escapeHtml(lead.product_interest)}</div>`
             : '';
 
+        const previewLine =
+            isEntry && lead.inbox_preview
+                ? `<div class="mt-1 line-clamp-2 rounded bg-white/80 px-2 py-1 text-[11px] text-slate-600 ring-1 ring-amber-100">${this.escapeHtml(lead.inbox_preview)}</div>`
+                : '';
+
+        const entryActions = isEntry
+            ? `<div class="mt-2 flex flex-wrap gap-1">
+                <button type="button" class="entry-btn-link rounded-md bg-white px-2 py-1 text-[11px] font-medium text-primary-700 ring-1 ring-primary-200 hover:bg-primary-50" data-lead-id="${lead.id}">Vincular</button>
+                <button type="button" class="entry-btn-accept rounded-md bg-white px-2 py-1 text-[11px] font-medium text-slate-800 ring-1 ring-slate-200 hover:bg-slate-50" data-lead-id="${lead.id}">Aceitar</button>
+                <button type="button" class="entry-btn-discard rounded-md bg-white px-2 py-1 text-[11px] font-medium text-red-700 ring-1 ring-red-200 hover:bg-red-50" data-lead-id="${lead.id}">Descartar</button>
+            </div>`
+            : '';
+
         const tagPills = tags
             .map(
                 (t) =>
@@ -416,13 +689,18 @@ const Kanban = {
                   }</div>`
                 : '';
 
+        const dragAttr = isEntry ? 'draggable="false" data-no-drag="1"' : 'draggable="true"';
+
         return `
-            <div class="${cardClasses.join(' ')}" data-lead-id="${lead.id}" data-stage-id="${stageId}" draggable="true">
+            <div class="${cardClasses.join(' ')}" data-lead-id="${lead.id}" data-stage-id="${stageId}" ${dragAttr}>
                 <div class="text-sm font-semibold leading-snug text-slate-900">${this.escapeHtml(lead.name)}</div>
+                ${waStatusPill}
                 ${phoneLine}
                 ${emailLine}
                 ${sourceLine}
                 ${productLine}
+                ${previewLine}
+                ${entryActions}
                 ${tagRow}
                 <div class="mt-2 text-sm font-medium text-slate-700">${this.formatCurrency(lead.value)}</div>
                 <div class="mt-2 flex items-center justify-between gap-2 border-t border-slate-100 pt-2">
@@ -461,19 +739,12 @@ const Kanban = {
     async runWhatsAppTrigger(leadId, payload = {}) {
         try {
             const res = await API.leads.triggerWhatsApp(leadId, payload);
-            if (res.success && res.data?.whatsapp_link) {
-                window.open(res.data.whatsapp_link, '_blank', 'noopener,noreferrer');
-                App.toast(res.message || 'WhatsApp aberto', 'success');
-                // Pipeline pode mover o lead automaticamente (ex.: etapa inicial -> intermediaria)
-                await this.loadData();
-                const modal = document.getElementById('lead-detail-modal');
-                const openId = modal?.dataset?.leadId ? parseInt(modal.dataset.leadId, 10) : null;
-                if (modal && !modal.classList.contains('hidden') && openId === leadId) {
-                    await this.openLeadDetail(leadId);
-                }
+            if (res.success && res.data?.conversation_id) {
+                App.toast(res.message || 'Mensagem enviada', 'success');
+                window.location.href = '/inbox#conv-' + encodeURIComponent(String(res.data.conversation_id));
                 return res;
             }
-            App.toast(res.message || 'Nao foi possivel abrir o WhatsApp', 'error');
+            App.toast(res.message || 'Nao foi possivel enviar pelo WhatsApp', 'error');
             return res;
         } catch (err) {
             console.error(err);

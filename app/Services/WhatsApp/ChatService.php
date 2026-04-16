@@ -4,6 +4,7 @@ namespace App\Services\WhatsApp;
 
 use App\Core\App;
 use App\Helpers\DebugAgentLog;
+use App\Helpers\PhoneHelper;
 use App\Core\Session;
 use App\Core\TenantContext;
 use App\Core\TenantAwareDatabase;
@@ -78,13 +79,23 @@ class ChatService
     }
 
     /**
-     * @return array{ok:bool,message?:string,message_id?:int}
+     * @return array{ok:bool,message?:string,message_id?:int,conversation_id?:int}
      */
-    public function sendText(int $conversationId, string $text): array
+    public function sendText(int $conversationId, string $text, string $senderType = 'user', ?int $senderId = null): array
     {
         $text = trim($text);
         if ($text === '') {
             return ['ok' => false, 'message' => 'Mensagem vazia'];
+        }
+
+        $effectiveType = $senderType === 'bot' ? 'bot' : 'user';
+        $effectiveSenderId = $senderId;
+        if ($effectiveType === 'user' && $effectiveSenderId === null) {
+            $user = Session::user();
+            $effectiveSenderId = (int) ($user['id'] ?? 0);
+        }
+        if ($effectiveType === 'bot') {
+            $effectiveSenderId = null;
         }
 
         $tid = (int) TenantContext::getEffectiveTenantId();
@@ -100,7 +111,6 @@ class ChatService
             return ['ok' => false, 'message' => 'Conversa nao encontrada'];
         }
 
-        $user = Session::user();
         $numberForEvolution = $this->evolutionRecipientNumber($conv);
 
         if ($numberForEvolution === '') {
@@ -162,8 +172,8 @@ class ChatService
             'conversation_id' => $conversationId,
             'whatsapp_message_id' => null,
             'direction' => 'outbound',
-            'sender_type' => 'user',
-            'sender_id' => (int) ($user['id'] ?? 0),
+            'sender_type' => $effectiveType,
+            'sender_id' => $effectiveSenderId,
             'type' => 'text',
             'content' => $text,
             'status' => 'pending',
@@ -206,18 +216,27 @@ class ChatService
         // #endregion agent log
 
         if ($res['ok']) {
+            $waMsgId = null;
+            $body = $res['body'] ?? null;
+            if (is_array($body) && isset($body['key']['id'])) {
+                $waMsgId = (string) $body['key']['id'];
+            }
+
+            $msgUpdate = ['status' => 'sent'];
+            if ($waMsgId !== null && $waMsgId !== '') {
+                $msgUpdate['whatsapp_message_id'] = $waMsgId;
+            }
             TenantAwareDatabase::update(
                 'messages',
-                ['status' => 'sent'],
+                $msgUpdate,
                 'id = :id',
                 [':id' => $mid]
             );
 
-            $body = $res['body'] ?? null;
             if (is_array($body) && isset($body['key']['remoteJid'])) {
                 $sentJid = (string) $body['key']['remoteJid'];
                 $leadIdForJid = (int) ($conv['lead_id'] ?? 0);
-                if ($sentJid !== '' && str_ends_with($sentJid, '@lid') && $leadIdForJid > 0) {
+                if ($sentJid !== '' && $leadIdForJid > 0) {
                     $this->mergeWhatsappJidIntoLead($leadIdForJid, $sentJid);
                 }
             }
@@ -244,7 +263,126 @@ class ChatService
             TenantAwareDatabase::mergeTenantParams([':id' => $conversationId, ':pv' => mb_substr($text, 0, 200)])
         );
 
-        return ['ok' => true, 'message_id' => $mid];
+        return ['ok' => true, 'message_id' => $mid, 'conversation_id' => $conversationId];
+    }
+
+    /**
+     * Cria ou retorna conversa do lead para a instancia e envia texto (inbox + Evolution).
+     *
+     * @return array{ok:bool,message?:string,conversation_id?:int,message_id?:int}
+     */
+    public function sendToLead(int $leadId, string $text, string $senderType = 'user', ?int $senderId = null): array
+    {
+        $text = trim($text);
+        if ($text === '') {
+            return ['ok' => false, 'message' => 'Mensagem vazia'];
+        }
+
+        $lead = TenantAwareDatabase::fetch(
+            'SELECT * FROM leads WHERE id = :id AND tenant_id = :tenant_id AND deleted_at IS NULL',
+            TenantAwareDatabase::mergeTenantParams([':id' => $leadId])
+        );
+        if (!$lead) {
+            return ['ok' => false, 'message' => 'Lead nao encontrado'];
+        }
+
+        $inst = TenantAwareDatabase::fetch(
+            "SELECT * FROM whatsapp_instances WHERE tenant_id = :tenant_id AND status = 'connected' ORDER BY id ASC LIMIT 1",
+            TenantAwareDatabase::mergeTenantParams()
+        );
+        if (!$inst) {
+            $inst = TenantAwareDatabase::fetch(
+                'SELECT * FROM whatsapp_instances WHERE tenant_id = :tenant_id ORDER BY id ASC LIMIT 1',
+                TenantAwareDatabase::mergeTenantParams()
+            );
+        }
+        if (!$inst) {
+            return ['ok' => false, 'message' => 'Nenhuma instancia WhatsApp configurada'];
+        }
+
+        $phoneDigits = '';
+        if (!empty($lead['phone']) && trim((string) $lead['phone']) !== '') {
+            $phoneDigits = preg_replace('/\D/', '', (string) $lead['phone']);
+        } elseif (!empty($lead['phone_normalized'])) {
+            $pn = (string) $lead['phone_normalized'];
+            if (!str_starts_with($pn, 'lid:')) {
+                $phoneDigits = preg_replace('/\D/', '', $pn);
+            }
+        }
+
+        if ($phoneDigits === '') {
+            return ['ok' => false, 'message' => 'Lead sem telefone valido para envio'];
+        }
+
+        $contactPhone = PhoneHelper::normalize($phoneDigits) ?: $phoneDigits;
+
+        $convId = $this->findOrCreateConversationForLead(
+            $leadId,
+            (int) $inst['id'],
+            $contactPhone,
+            (string) ($lead['name'] ?? '')
+        );
+        if ($convId === null) {
+            return ['ok' => false, 'message' => 'Nao foi possivel criar conversa'];
+        }
+
+        return $this->sendText($convId, $text, $senderType, $senderId);
+    }
+
+    public function findOrCreateConversationForLead(int $leadId, int $whatsappInstanceId, string $contactPhone, string $contactName = ''): ?int
+    {
+        $byLead = TenantAwareDatabase::fetch(
+            'SELECT id FROM conversations WHERE tenant_id = :tenant_id AND whatsapp_instance_id = :wid AND lead_id = :lid ORDER BY id DESC LIMIT 1',
+            TenantAwareDatabase::mergeTenantParams([
+                ':wid' => $whatsappInstanceId,
+                ':lid' => $leadId,
+            ])
+        );
+        if ($byLead) {
+            $cid = (int) $byLead['id'];
+            TenantAwareDatabase::query(
+                'UPDATE conversations SET contact_phone = :cp, contact_name = COALESCE(NULLIF(:name, \'\'), contact_name) WHERE id = :id AND tenant_id = :tenant_id',
+                TenantAwareDatabase::mergeTenantParams([
+                    ':id' => $cid,
+                    ':cp' => $contactPhone,
+                    ':name' => $contactName,
+                ])
+            );
+
+            return $cid;
+        }
+
+        $byPhone = TenantAwareDatabase::fetch(
+            'SELECT id, lead_id FROM conversations WHERE tenant_id = :tenant_id AND whatsapp_instance_id = :wid AND contact_phone = :cp ORDER BY id DESC LIMIT 1',
+            TenantAwareDatabase::mergeTenantParams([
+                ':wid' => $whatsappInstanceId,
+                ':cp' => $contactPhone,
+            ])
+        );
+        if ($byPhone) {
+            $cid = (int) $byPhone['id'];
+            TenantAwareDatabase::query(
+                'UPDATE conversations SET lead_id = :lid, contact_name = COALESCE(NULLIF(:name, \'\'), contact_name) WHERE id = :id AND tenant_id = :tenant_id',
+                TenantAwareDatabase::mergeTenantParams([
+                    ':id' => $cid,
+                    ':lid' => $leadId,
+                    ':name' => $contactName,
+                ])
+            );
+
+            return $cid;
+        }
+
+        $newId = TenantAwareDatabase::insert('conversations', [
+            'lead_id' => $leadId,
+            'whatsapp_instance_id' => $whatsappInstanceId,
+            'contact_phone' => $contactPhone,
+            'contact_name' => $contactName !== '' ? $contactName : null,
+            'status' => 'open',
+            'unread_count' => 0,
+        ]);
+
+        return $newId > 0 ? $newId : null;
     }
 
     /**
@@ -269,7 +407,7 @@ class ChatService
         }
 
         $row = TenantAwareDatabase::fetch(
-            'SELECT metadata_json FROM leads WHERE id = :id AND tenant_id = :tenant_id LIMIT 1',
+            'SELECT phone, phone_normalized, metadata_json FROM leads WHERE id = :id AND tenant_id = :tenant_id LIMIT 1',
             TenantAwareDatabase::mergeTenantParams([':id' => $leadId])
         );
         if (!$row) {
@@ -289,6 +427,17 @@ class ChatService
             'id = :id',
             [':id' => $leadId]
         );
+
+        $tenantId = TenantContext::getEffectiveTenantId();
+        $pnRaw = (string) ($row['phone_normalized'] ?? '');
+        $pn = PhoneHelper::normalize($pnRaw);
+        if ($pn === '' || str_starts_with($pnRaw, 'lid:')) {
+            $pn = preg_replace('/\D/', '', (string) ($row['phone'] ?? ''));
+        }
+        if ($pn !== '' && $whatsappJid !== '') {
+            $phoneJid = str_contains($whatsappJid, '@s.whatsapp.net') ? $whatsappJid : null;
+            LidResolverService::storeMapping((int) $tenantId, $whatsappJid, $pn, $phoneJid, 'send_response');
+        }
     }
 
     private function evolutionRecipientNumber(array $conv): string

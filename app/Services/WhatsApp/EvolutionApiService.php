@@ -156,6 +156,21 @@ class EvolutionApiService
     }
 
     /**
+     * Verifica se numeros existem no WhatsApp e retorna JID (pode ser @s.whatsapp.net ou @lid).
+     *
+     * @param list<string> $numbers Apenas digitos com DDI (ex: 554191788844)
+     * @return array{ok:bool,http:int,body:mixed,raw:string}
+     */
+    public function checkWhatsappNumbers(string $baseUrl, string $apiKey, string $instanceName, array $numbers): array
+    {
+        $baseUrl = rtrim($baseUrl, '/');
+        $url = $baseUrl . '/chat/whatsappNumbers/' . rawurlencode($instanceName);
+        $payload = json_encode(['numbers' => array_values($numbers)], JSON_UNESCAPED_UNICODE);
+
+        return $this->request('POST', $url, $apiKey, $payload);
+    }
+
+    /**
      * Extrai o primeiro JID de telefone (@s.whatsapp.net / @c.us) de uma resposta do findContacts.
      * Retorna string vazia se nenhum JID de telefone for encontrado.
      *
