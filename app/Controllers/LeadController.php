@@ -736,10 +736,22 @@ class LeadController
             return;
         }
 
-        $chat = new ChatService();
+        try {
+            $chat = new ChatService();
+        } catch (\Throwable $e) {
+            App::logError('Erro ao instanciar ChatService', $e);
+            $response->jsonError('Erro interno: ChatService', 500);
+            return;
+        }
 
         if ($message === null || $message === '') {
-            $open = $chat->ensureConversationForLead((int) $id);
+            try {
+                $open = $chat->ensureConversationForLead((int) $id);
+            } catch (\Throwable $e) {
+                App::logError('Erro em ensureConversationForLead', $e);
+                $response->jsonError('Erro ao garantir conversa: ' . $e->getMessage(), 500);
+                return;
+            }
             if (!$open['ok']) {
                 $response->jsonError($open['message'] ?? 'Nao foi possivel abrir a conversa no inbox', 422);
                 return;
@@ -759,7 +771,13 @@ class LeadController
 
         $user = Session::user();
         $actorUserId = ($user !== null && isset($user['id'])) ? (int) $user['id'] : null;
-        $send = $chat->sendToLead((int) $id, $message, 'user', $actorUserId ?? 0);
+        try {
+            $send = $chat->sendToLead((int) $id, $message, 'user', $actorUserId ?? 0);
+        } catch (\Throwable $e) {
+            App::logError('Erro em sendToLead', $e);
+            $response->jsonError('Erro ao enviar: ' . $e->getMessage(), 500);
+            return;
+        }
 
         if (!$send['ok']) {
             $response->jsonError($send['message'] ?? 'Falha ao enviar WhatsApp', 422);

@@ -102,9 +102,9 @@ class ChatService
         $conv = TenantAwareDatabase::fetch(
             'SELECT c.*, w.api_url, w.api_key, w.instance_name 
              FROM conversations c
-             JOIN whatsapp_instances w ON w.id = c.whatsapp_instance_id AND w.tenant_id = ' . $tid . '
+             JOIN whatsapp_instances w ON w.id = c.whatsapp_instance_id AND w.tenant_id = :wid_tid
              WHERE c.id = :cid AND c.tenant_id = :tenant_id',
-            TenantAwareDatabase::mergeTenantParams([':cid' => $conversationId])
+            TenantAwareDatabase::mergeTenantParams([':cid' => $conversationId, ':wid_tid' => $tid])
         );
 
         if (!$conv) {
@@ -281,55 +281,59 @@ class ChatService
      */
     private function resolveConversationForLead(int $leadId): array
     {
-        $lead = TenantAwareDatabase::fetch(
-            'SELECT * FROM leads WHERE id = :id AND tenant_id = :tenant_id AND deleted_at IS NULL',
-            TenantAwareDatabase::mergeTenantParams([':id' => $leadId])
-        );
-        if (!$lead) {
-            return ['ok' => false, 'message' => 'Lead nao encontrado'];
-        }
+        try {
+            $lead = TenantAwareDatabase::fetch(
+                'SELECT * FROM leads WHERE id = :id AND tenant_id = :tenant_id AND deleted_at IS NULL',
+                TenantAwareDatabase::mergeTenantParams([':id' => $leadId])
+            );
+            if (!$lead) {
+                return ['ok' => false, 'message' => 'Lead nao encontrado'];
+            }
 
-        $inst = TenantAwareDatabase::fetch(
-            "SELECT * FROM whatsapp_instances WHERE tenant_id = :tenant_id AND status = 'connected' ORDER BY id ASC LIMIT 1",
-            TenantAwareDatabase::mergeTenantParams()
-        );
-        if (!$inst) {
             $inst = TenantAwareDatabase::fetch(
-                'SELECT * FROM whatsapp_instances WHERE tenant_id = :tenant_id ORDER BY id ASC LIMIT 1',
+                "SELECT * FROM whatsapp_instances WHERE tenant_id = :tenant_id AND status = 'connected' ORDER BY id ASC LIMIT 1",
                 TenantAwareDatabase::mergeTenantParams()
             );
-        }
-        if (!$inst) {
-            return ['ok' => false, 'message' => 'Nenhuma instancia WhatsApp configurada'];
-        }
-
-        $phoneDigits = '';
-        if (!empty($lead['phone']) && trim((string) $lead['phone']) !== '') {
-            $phoneDigits = preg_replace('/\D/', '', (string) $lead['phone']);
-        } elseif (!empty($lead['phone_normalized'])) {
-            $pn = (string) $lead['phone_normalized'];
-            if (!str_starts_with($pn, 'lid:')) {
-                $phoneDigits = preg_replace('/\D/', '', $pn);
+            if (!$inst) {
+                $inst = TenantAwareDatabase::fetch(
+                    'SELECT * FROM whatsapp_instances WHERE tenant_id = :tenant_id ORDER BY id ASC LIMIT 1',
+                    TenantAwareDatabase::mergeTenantParams()
+                );
             }
+            if (!$inst) {
+                return ['ok' => false, 'message' => 'Nenhuma instancia WhatsApp configurada'];
+            }
+
+            $phoneDigits = '';
+            if (!empty($lead['phone']) && trim((string) $lead['phone']) !== '') {
+                $phoneDigits = preg_replace('/\D/', '', (string) $lead['phone']);
+            } elseif (!empty($lead['phone_normalized'])) {
+                $pn = (string) $lead['phone_normalized'];
+                if (!str_starts_with($pn, 'lid:')) {
+                    $phoneDigits = preg_replace('/\D/', '', $pn);
+                }
+            }
+
+            if ($phoneDigits === '') {
+                return ['ok' => false, 'message' => 'Lead sem telefone valido para envio'];
+            }
+
+            $contactPhone = PhoneHelper::normalize($phoneDigits) ?: $phoneDigits;
+
+            $convId = $this->findOrCreateConversationForLead(
+                $leadId,
+                (int) $inst['id'],
+                $contactPhone,
+                (string) ($lead['name'] ?? '')
+            );
+            if ($convId === null) {
+                return ['ok' => false, 'message' => 'Nao foi possivel criar conversa'];
+            }
+
+            return ['ok' => true, 'conversation_id' => $convId];
+        } catch (\Throwable $e) {
+            throw new \RuntimeException('resolveConversationForLead: ' . $e->getMessage(), 0, $e);
         }
-
-        if ($phoneDigits === '') {
-            return ['ok' => false, 'message' => 'Lead sem telefone valido para envio'];
-        }
-
-        $contactPhone = PhoneHelper::normalize($phoneDigits) ?: $phoneDigits;
-
-        $convId = $this->findOrCreateConversationForLead(
-            $leadId,
-            (int) $inst['id'],
-            $contactPhone,
-            (string) ($lead['name'] ?? '')
-        );
-        if ($convId === null) {
-            return ['ok' => false, 'message' => 'Nao foi possivel criar conversa'];
-        }
-
-        return ['ok' => true, 'conversation_id' => $convId];
     }
 
     /**
