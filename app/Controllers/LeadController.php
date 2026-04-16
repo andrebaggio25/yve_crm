@@ -734,7 +734,8 @@ class LeadController
         }
 
         $user = Session::user();
-        $send = $chat->sendToLead((int) $id, $message, 'user', (int) ($user['id'] ?? 0));
+        $actorUserId = ($user !== null && isset($user['id'])) ? (int) $user['id'] : null;
+        $send = $chat->sendToLead((int) $id, $message, 'user', $actorUserId ?? 0);
 
         if (!$send['ok']) {
             $response->jsonError($send['message'] ?? 'Falha ao enviar WhatsApp', 422);
@@ -755,15 +756,18 @@ class LeadController
 
             $preview = mb_strlen($message) > 220 ? mb_substr($message, 0, 220) . '…' : $message;
 
+            $tplId = $template ? (int) $template['id'] : null;
+            $tplName = $template ? (string) ($template['name'] ?? '') : null;
+
             TenantAwareDatabase::insert('lead_events', [
                 'lead_id' => $id,
-                'user_id' => $user['id'],
+                'user_id' => $actorUserId,
                 'event_type' => 'whatsapp_trigger',
-                'description' => 'Mensagem WhatsApp enviada (Evolution)' . ($template ? (' — ' . $template['name']) : ''),
+                'description' => 'Mensagem WhatsApp enviada (Evolution)' . ($tplName !== null && $tplName !== '' ? (' — ' . $tplName) : ''),
                 'metadata_json' => json_encode([
                     'stage_type' => $lead['stage_type'],
-                    'template_id' => $template['id'] ?? null,
-                    'template_name' => $template['name'] ?? null,
+                    'template_id' => $tplId,
+                    'template_name' => $tplName,
                     'message_preview' => $preview,
                     'channel' => 'whatsapp',
                     'via' => 'api',
@@ -788,7 +792,7 @@ class LeadController
 
                     TenantAwareDatabase::insert('lead_events', [
                         'lead_id' => $id,
-                        'user_id' => $user['id'],
+                        'user_id' => $actorUserId,
                         'event_type' => 'stage_changed',
                         'description' => 'Lead movido automaticamente apos contato WhatsApp',
                         'metadata_json' => json_encode(['auto_moved' => true, 'reason' => 'whatsapp_trigger'])
@@ -804,10 +808,10 @@ class LeadController
                 'conversation_id' => $send['conversation_id'] ?? null,
                 'message_id' => $send['message_id'] ?? null,
                 'message' => $message,
-                'template_id' => $template['id'] ?? null,
-                'template_name' => $template['name'] ?? null,
+                'template_id' => $tplId,
+                'template_name' => $tplName !== '' ? $tplName : null,
             ], 'Mensagem enviada');
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             if ($db instanceof \PDO && $db->inTransaction()) {
                 $db->rollBack();
             }
