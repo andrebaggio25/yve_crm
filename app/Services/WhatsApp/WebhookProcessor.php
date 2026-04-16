@@ -229,7 +229,7 @@ class WebhookProcessor
         if ($isLidKey && $remoteJidFull !== '' && !$resolved['is_group']) {
             $lead = Database::fetch(
                 'SELECT id FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL
-                 AND JSON_UNQUOTE(JSON_EXTRACT(metadata_json, \'$.whatsapp_jid\')) = :jid
+                 AND BINARY JSON_UNQUOTE(JSON_EXTRACT(metadata_json, \'$.whatsapp_jid\')) = BINARY :jid
                  LIMIT 1',
                 [':tid' => $tenantId, ':jid' => $remoteJidFull]
             );
@@ -264,6 +264,18 @@ class WebhookProcessor
 
         $leadId = $lead ? (int) $lead['id'] : null;
 
+        $conv = $this->findConversationForPeer(
+            $tenantId,
+            $whatsappInstanceId,
+            $normalized,
+            $leadId,
+            $remoteJidFull,
+            (bool) $resolved['is_group']
+        );
+        if ($conv && isset($conv['lead_id']) && (int) $conv['lead_id'] > 0 && $leadId === null) {
+            $leadId = (int) $conv['lead_id'];
+        }
+
         if ($leadId !== null && $isLidKey && $remoteJidFull !== '' && str_ends_with($remoteJidFull, '@lid')) {
             $this->persistLeadWhatsappJid($tenantId, $leadId, $remoteJidFull);
         }
@@ -291,10 +303,12 @@ class WebhookProcessor
             }
         }
 
-        $conv = Database::fetch(
-            'SELECT id, unread_count, metadata_json FROM conversations WHERE tenant_id = :tid AND whatsapp_instance_id = :wid AND contact_phone = :phone LIMIT 1',
-            [':tid' => $tenantId, ':wid' => $whatsappInstanceId, ':phone' => $normalized]
-        );
+        if (!$conv && $leadId !== null && $leadId > 0) {
+            $conv = Database::fetch(
+                'SELECT id, unread_count, metadata_json, lead_id, contact_phone FROM conversations WHERE tenant_id = :tid AND whatsapp_instance_id = :wid AND lead_id = :lid LIMIT 1',
+                [':tid' => $tenantId, ':wid' => $whatsappInstanceId, ':lid' => $leadId]
+            );
+        }
 
         if (!$conv) {
             Database::query(
@@ -317,13 +331,15 @@ class WebhookProcessor
             $convId = (int) $conv['id'];
             $unread = (int) $conv['unread_count'] + 1;
             $mergedMeta = $this->mergeConversationMetadata($conv['metadata_json'] ?? null, $resolved['wa_meta']);
+            $existingLeadId = isset($conv['lead_id']) && (int) $conv['lead_id'] > 0 ? (int) $conv['lead_id'] : null;
+            $leadIdForUpdate = $existingLeadId ?? $leadId;
             $sqlPush = ($pushName !== '' && $pushName !== null)
-                ? 'UPDATE conversations SET lead_id = COALESCE(lead_id, :lid), last_message_at = NOW(), last_message_preview = :preview, unread_count = :unread, contact_push_name = :push, metadata_json = :meta WHERE id = :id AND tenant_id = :tid'
-                : 'UPDATE conversations SET lead_id = COALESCE(lead_id, :lid), last_message_at = NOW(), last_message_preview = :preview, unread_count = :unread, metadata_json = :meta WHERE id = :id AND tenant_id = :tid';
+                ? 'UPDATE conversations SET lead_id = :set_lid, last_message_at = NOW(), last_message_preview = :preview, unread_count = :unread, contact_push_name = :push, metadata_json = :meta WHERE id = :id AND tenant_id = :tid'
+                : 'UPDATE conversations SET lead_id = :set_lid, last_message_at = NOW(), last_message_preview = :preview, unread_count = :unread, metadata_json = :meta WHERE id = :id AND tenant_id = :tid';
             $paramsPush = [
                 ':id' => $convId,
                 ':tid' => $tenantId,
-                ':lid' => $leadId,
+                ':set_lid' => $leadIdForUpdate,
                 ':preview' => mb_substr($text ?: '[' . $type . ']', 0, 200),
                 ':unread' => $unread,
                 ':meta' => json_encode($mergedMeta, JSON_UNESCAPED_UNICODE),
@@ -522,7 +538,7 @@ class WebhookProcessor
         if ($isLidKey && $remoteFull !== '' && !$resolved['is_group']) {
             $lead = Database::fetch(
                 'SELECT id FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL
-                 AND JSON_UNQUOTE(JSON_EXTRACT(metadata_json, \'$.whatsapp_jid\')) = :jid
+                 AND BINARY JSON_UNQUOTE(JSON_EXTRACT(metadata_json, \'$.whatsapp_jid\')) = BINARY :jid
                  LIMIT 1',
                 [':tid' => $tenantId, ':jid' => $remoteFull]
             );
@@ -535,10 +551,23 @@ class WebhookProcessor
         }
         $leadId = $lead ? (int) $lead['id'] : null;
 
-        $conv = Database::fetch(
-            'SELECT id, metadata_json FROM conversations WHERE tenant_id = :tid AND whatsapp_instance_id = :wid AND contact_phone = :phone LIMIT 1',
-            [':tid' => $tenantId, ':wid' => $whatsappInstanceId, ':phone' => $normalized]
+        $conv = $this->findConversationForPeer(
+            $tenantId,
+            $whatsappInstanceId,
+            $normalized,
+            $leadId,
+            $remoteFull,
+            (bool) $resolved['is_group']
         );
+        if ($conv && isset($conv['lead_id']) && (int) $conv['lead_id'] > 0 && $leadId === null) {
+            $leadId = (int) $conv['lead_id'];
+        }
+        if (!$conv && $leadId !== null && $leadId > 0) {
+            $conv = Database::fetch(
+                'SELECT id, metadata_json, lead_id, contact_phone FROM conversations WHERE tenant_id = :tid AND whatsapp_instance_id = :wid AND lead_id = :lid LIMIT 1',
+                [':tid' => $tenantId, ':wid' => $whatsappInstanceId, ':lid' => $leadId]
+            );
+        }
 
         if (!$conv) {
             Database::query(
@@ -557,12 +586,14 @@ class WebhookProcessor
         } else {
             $convId = (int) $conv['id'];
             $mergedMeta = $this->mergeConversationMetadata($conv['metadata_json'] ?? null, $resolved['wa_meta']);
+            $existingLeadId = isset($conv['lead_id']) && (int) $conv['lead_id'] > 0 ? (int) $conv['lead_id'] : null;
+            $leadIdForUpdate = $existingLeadId ?? $leadId;
             Database::query(
-                'UPDATE conversations SET lead_id = COALESCE(lead_id, :lid), last_message_at = NOW(), last_message_preview = :preview, metadata_json = :meta WHERE id = :id AND tenant_id = :tid',
+                'UPDATE conversations SET lead_id = :set_lid, last_message_at = NOW(), last_message_preview = :preview, metadata_json = :meta WHERE id = :id AND tenant_id = :tid',
                 [
                     ':id' => $convId,
                     ':tid' => $tenantId,
-                    ':lid' => $leadId,
+                    ':set_lid' => $leadIdForUpdate,
                     ':preview' => mb_substr($text ?: '[' . $type . ']', 0, 200),
                     ':meta' => json_encode($mergedMeta, JSON_UNESCAPED_UNICODE),
                 ]
@@ -781,6 +812,50 @@ class WebhookProcessor
                 'wa_is_group' => false,
             ],
         ];
+    }
+
+    /**
+     * Localiza conversa por telefone (normalizado), por lead ou pelo JID salvo em metadata (evita duplicata LID).
+     *
+     * @return array<string, mixed>|null
+     */
+    private function findConversationForPeer(
+        int $tenantId,
+        int $whatsappInstanceId,
+        string $contactPhone,
+        ?int $leadId,
+        string $remoteJidFull,
+        bool $isGroup
+    ): ?array {
+        $conv = Database::fetch(
+            'SELECT id, unread_count, metadata_json, lead_id, contact_phone FROM conversations WHERE tenant_id = :tid AND whatsapp_instance_id = :wid AND contact_phone = :phone LIMIT 1',
+            [':tid' => $tenantId, ':wid' => $whatsappInstanceId, ':phone' => $contactPhone]
+        );
+        if ($conv) {
+            return $conv;
+        }
+
+        if (!$isGroup && $leadId !== null && $leadId > 0) {
+            $conv = Database::fetch(
+                'SELECT id, unread_count, metadata_json, lead_id, contact_phone FROM conversations WHERE tenant_id = :tid AND whatsapp_instance_id = :wid AND lead_id = :lid LIMIT 1',
+                [':tid' => $tenantId, ':wid' => $whatsappInstanceId, ':lid' => $leadId]
+            );
+            if ($conv) {
+                return $conv;
+            }
+        }
+
+        if (!$isGroup && $remoteJidFull !== '') {
+            $conv = Database::fetch(
+                'SELECT id, unread_count, metadata_json, lead_id, contact_phone FROM conversations
+                 WHERE tenant_id = :tid AND whatsapp_instance_id = :wid
+                 AND BINARY JSON_UNQUOTE(JSON_EXTRACT(metadata_json, \'$.wa_remote_jid\')) = BINARY :jid
+                 LIMIT 1',
+                [':tid' => $tenantId, ':wid' => $whatsappInstanceId, ':jid' => $remoteJidFull]
+            );
+        }
+
+        return $conv ?: null;
     }
 
     /**

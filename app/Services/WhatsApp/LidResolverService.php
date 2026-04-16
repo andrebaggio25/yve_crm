@@ -301,7 +301,7 @@ class LidResolverService
         $prov = Database::fetch(
             'SELECT id FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL
              AND (pending_identity_resolution = 1 OR phone_normalized LIKE \'lid:%\')
-             AND JSON_UNQUOTE(JSON_EXTRACT(metadata_json, \'$.whatsapp_jid\')) = :jid
+             AND BINARY JSON_UNQUOTE(JSON_EXTRACT(metadata_json, \'$.whatsapp_jid\')) = BINARY :jid
              LIMIT 1',
             [':tid' => $tenantId, ':jid' => $lidJid]
         );
