@@ -261,6 +261,113 @@ class WebhookProcessor
         }
     }
 
+    /**
+     * Varre todos os campos do key Baileys e retorna o primeiro JID de LID
+     * (termina com @lid) e o primeiro JID de telefone (@s.whatsapp.net/@c.us)
+     * encontrados. Serve tanto para inbound quanto outbound — garantindo que
+     * capturemos o par (LID, telefone) quando a Evolution envia ambos (mesmo
+     * que apenas em remoteJidAlt / participantAlt / senderPn).
+     *
+     * @param array<string, mixed> $key
+     *
+     * @return array{lid: string, phone_jid: string, phone_norm: string}
+     */
+    private function extractIdentitiesFromKey(array $key, string $senderPn = ''): array
+    {
+        $lid = '';
+        $phoneJid = '';
+        $fields = ['remoteJid', 'remoteJidAlt', 'participant', 'participantAlt', 'participantPn', 'senderPn'];
+        foreach ($fields as $f) {
+            $v = (string) ($key[$f] ?? '');
+            if ($v === '') {
+                continue;
+            }
+            if ($lid === '' && str_ends_with($v, '@lid')) {
+                $lid = $v;
+            }
+            if ($phoneJid === '' && (str_ends_with($v, '@s.whatsapp.net') || str_ends_with($v, '@c.us'))) {
+                $phoneJid = $v;
+            }
+        }
+
+        $phoneNorm = '';
+        if ($phoneJid !== '') {
+            $local = explode('@', $phoneJid)[0] ?? '';
+            $digits = preg_replace('/\D/', '', $local) ?: $local;
+            $phoneNorm = PhoneHelper::normalize($digits) ?: $digits;
+        } elseif ($senderPn !== '') {
+            $digits = preg_replace('/\D/', '', $senderPn) ?: '';
+            if ($digits !== '') {
+                $phoneNorm = PhoneHelper::normalize($digits) ?: $digits;
+                $phoneJid = $digits . '@s.whatsapp.net';
+            }
+        }
+
+        return ['lid' => $lid, 'phone_jid' => $phoneJid, 'phone_norm' => $phoneNorm];
+    }
+
+    /**
+     * Se tivermos ambos LID e telefone no payload, persiste mapping e tenta
+     * unificar leads provisorios. Devolve true se mapeamento foi efetivado.
+     */
+    private function captureLidPhonePair(int $tenantId, string $lidJid, string $phoneNorm, ?string $phoneJid, string $source): bool
+    {
+        if ($lidJid === '' || $phoneNorm === '' || str_starts_with($phoneNorm, 'lid:')) {
+            return false;
+        }
+        LidResolverService::storeMapping($tenantId, $lidJid, $phoneNorm, $phoneJid, $source);
+        LidResolverService::reconcileLeadsOnMapping($tenantId, $lidJid, $phoneNorm);
+
+        return true;
+    }
+
+    /**
+     * Tenta localizar um lead existente para o peer inbound/outbound antes de
+     * cair para criacao. Cobre:
+     *   1) LID direto em leads.whatsapp_lid_jid
+     *   2) phone_normalized exato
+     *   3) phone_normalized com sufixo BR (DDI+DDD com/sem 9)
+     *
+     * @return array<string, mixed>|null
+     */
+    private function findLeadByIdentities(int $tenantId, ?string $lidJid, string $phoneNorm): ?array
+    {
+        if ($lidJid !== null && $lidJid !== '') {
+            $lead = Database::fetch(
+                'SELECT id, whatsapp_lid_jid FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL AND whatsapp_lid_jid = :jid LIMIT 1',
+                [':tid' => $tenantId, ':jid' => $lidJid]
+            );
+            if ($lead) {
+                return $lead;
+            }
+        }
+
+        if ($phoneNorm !== '' && !str_starts_with($phoneNorm, 'lid:')) {
+            $lead = Database::fetch(
+                'SELECT id, whatsapp_lid_jid FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL AND phone_normalized = :p LIMIT 1',
+                [':tid' => $tenantId, ':p' => $phoneNorm]
+            );
+            if ($lead) {
+                return $lead;
+            }
+
+            // Fallback por sufixo: cobre casos onde o BR adiciona/remove o 9
+            // apos o DDD (ex.: 5541984874822 vs 554184874822).
+            if (strlen($phoneNorm) >= 8) {
+                $suffix = substr($phoneNorm, -8);
+                $lead = Database::fetch(
+                    'SELECT id, whatsapp_lid_jid FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL AND phone_normalized LIKE :sfx LIMIT 1',
+                    [':tid' => $tenantId, ':sfx' => '%' . $suffix]
+                );
+                if ($lead) {
+                    return $lead;
+                }
+            }
+        }
+
+        return null;
+    }
+
     private function processOneMessage(array $msg, int $tenantId, int $whatsappInstanceId, string $eventName = ''): void
     {
         $key = $msg['key'] ?? [];
@@ -310,6 +417,20 @@ class WebhookProcessor
         $resolved = $this->resolveContactFromKey($key, $instancePhoneNorm !== '' ? $instancePhoneNorm : null, $senderPn);
         if ($resolved === null) {
             return;
+        }
+
+        // Captura par (LID + telefone) sempre que o payload traz ambos em
+        // qualquer posicao do key. Isso ativa o reconcile ANTES do matching
+        // de lead, evitando criacao de lead provisorio.
+        $pairs = $this->extractIdentitiesFromKey($key, $senderPn);
+        if ($pairs['lid'] !== '' && $pairs['phone_norm'] !== '') {
+            $this->captureLidPhonePair(
+                $tenantId,
+                $pairs['lid'],
+                $pairs['phone_norm'],
+                $pairs['phone_jid'] !== '' ? $pairs['phone_jid'] : null,
+                'webhook_inbound_key'
+            );
         }
 
         $this->applyLidResolutionPipeline($resolved, $tenantId, $instRow);
@@ -380,17 +501,19 @@ class WebhookProcessor
         $remoteJidFull = (string) ($key['remoteJid'] ?? '');
         $lidJid = ($remoteJidFull !== '' && str_ends_with($remoteJidFull, '@lid')) ? $remoteJidFull : null;
 
-        $lead = null;
-        if ($lidJid !== null && !$resolved['is_group']) {
-            $lead = Database::fetch(
-                'SELECT id FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL AND whatsapp_lid_jid = :jid LIMIT 1',
-                [':tid' => $tenantId, ':jid' => $lidJid]
-            );
+        // Match robusto: busca por LID, phone_normalized exato e sufixo (BR9).
+        // Tambem cobre o caso LID-only quando ja tinhamos mapping pelo par.
+        $phoneForSearch = $normalized;
+        if ($isLidKey && $pairs['phone_norm'] !== '') {
+            $phoneForSearch = $pairs['phone_norm'];
         }
+        $lead = $resolved['is_group']
+            ? null
+            : $this->findLeadByIdentities($tenantId, $lidJid, $phoneForSearch);
 
         if (!$lead && $isLidKey && $pushName !== '' && !$resolved['is_group']) {
             $matches = Database::fetchAll(
-                'SELECT id FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL
+                'SELECT id, whatsapp_lid_jid FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL
                  AND phone IS NOT NULL AND TRIM(phone) <> \'\'
                  AND name = :push
                  LIMIT 3',
@@ -399,20 +522,6 @@ class WebhookProcessor
             if (count($matches) === 1) {
                 $lead = $matches[0];
             }
-        }
-
-        if (!$lead) {
-            $lead = Database::fetch(
-                'SELECT id FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL AND phone_normalized = :p LIMIT 1',
-                [':tid' => $tenantId, ':p' => $normalized]
-            );
-        }
-        if (!$lead && strlen($normalized) >= 8 && !$isLidKey) {
-            $suffix = substr($normalized, -8);
-            $lead = Database::fetch(
-                'SELECT id FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL AND phone_normalized LIKE :sfx LIMIT 1',
-                [':tid' => $tenantId, ':sfx' => '%' . $suffix]
-            );
         }
 
         $leadId = $lead ? (int) $lead['id'] : null;
@@ -637,6 +746,20 @@ class WebhookProcessor
             return;
         }
 
+        // Captura par (LID, telefone) no outbound ja aqui — e o caminho mais
+        // confiavel para obter o LID do destinatario quando ele ainda nao
+        // respondeu. A Evolution inclui ambos em remoteJid/remoteJidAlt.
+        $pairs = $this->extractIdentitiesFromKey($key, $senderPn);
+        if ($pairs['lid'] !== '' && $pairs['phone_norm'] !== '') {
+            $this->captureLidPhonePair(
+                $tenantId,
+                $pairs['lid'],
+                $pairs['phone_norm'],
+                $pairs['phone_jid'] !== '' ? $pairs['phone_jid'] : null,
+                'webhook_outbound_key'
+            );
+        }
+
         $this->applyLidResolutionPipeline($resolved, $tenantId, $instRow);
 
         $normalized = $resolved['normalized'];
@@ -685,20 +808,11 @@ class WebhookProcessor
             $filename = isset($dm['fileName']) ? (string) $dm['fileName'] : null;
         }
 
-        $lidJid = ($remoteFull !== '' && str_ends_with($remoteFull, '@lid')) ? $remoteFull : null;
-        $lead = null;
-        if ($lidJid !== null && !$resolved['is_group']) {
-            $lead = Database::fetch(
-                'SELECT id FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL AND whatsapp_lid_jid = :jid LIMIT 1',
-                [':tid' => $tenantId, ':jid' => $lidJid]
-            );
-        }
-        if (!$lead) {
-            $lead = Database::fetch(
-                'SELECT id FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL AND phone_normalized = :p LIMIT 1',
-                [':tid' => $tenantId, ':p' => $normalized]
-            );
-        }
+        $lidJid = $pairs['lid'] !== '' ? $pairs['lid'] : (($remoteFull !== '' && str_ends_with($remoteFull, '@lid')) ? $remoteFull : null);
+        $phoneForSearch = !str_starts_with($normalized, 'lid:') ? $normalized : $pairs['phone_norm'];
+        $lead = $resolved['is_group']
+            ? null
+            : $this->findLeadByIdentities($tenantId, $lidJid, $phoneForSearch);
         $leadId = $lead ? (int) $lead['id'] : null;
 
         if ($leadId !== null && $lidJid !== null) {
@@ -1001,6 +1115,25 @@ class WebhookProcessor
         );
         if ($conv) {
             return $conv;
+        }
+
+        // Fallback por sufixo (BR com/sem o 9 apos DDD) — essencial para
+        // reutilizar a conversa criada por envio manual quando o inbound
+        // chega sem o 9.
+        if (!$isGroup && $contactPhone !== '' && !str_starts_with($contactPhone, 'lid:') && strlen($contactPhone) >= 8) {
+            $suffix = substr($contactPhone, -8);
+            $conv = Database::fetch(
+                'SELECT id, unread_count, metadata_json, lead_id, contact_phone, whatsapp_lid_jid
+                 FROM conversations
+                 WHERE tenant_id = :tid AND whatsapp_instance_id = :wid
+                   AND contact_phone NOT LIKE \'lid:%\'
+                   AND contact_phone LIKE :sfx
+                 ORDER BY id ASC LIMIT 1',
+                [':tid' => $tenantId, ':wid' => $whatsappInstanceId, ':sfx' => '%' . $suffix]
+            );
+            if ($conv) {
+                return $conv;
+            }
         }
 
         if (!$isGroup && $leadId !== null && $leadId > 0) {

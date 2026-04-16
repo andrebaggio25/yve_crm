@@ -304,6 +304,7 @@ class LidResolverService
 
     /**
      * Apos mapeamento LID->telefone: unifica leads provisorios e atualiza conversas.
+     * Cobre variantes BR (com/sem 9 apos DDD).
      */
     public static function reconcileLeadsOnMapping(int $tenantId, string $lidJid, string $phoneNormalized): void
     {
@@ -311,10 +312,26 @@ class LidResolverService
             return;
         }
 
+        // Tenta por match exato primeiro; fallback por sufixo dos ultimos 8
+        // digitos (mesmo celular com/sem o 9 depois do DDD).
         $real = Database::fetch(
-            'SELECT id FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL AND phone_normalized = :pn LIMIT 1',
+            'SELECT id, phone, phone_normalized FROM leads
+             WHERE tenant_id = :tid AND deleted_at IS NULL AND phone_normalized = :pn
+             LIMIT 1',
             [':tid' => $tenantId, ':pn' => $phoneNormalized]
         );
+        if (!$real && strlen($phoneNormalized) >= 8) {
+            $suffix = substr($phoneNormalized, -8);
+            $real = Database::fetch(
+                'SELECT id, phone, phone_normalized FROM leads
+                 WHERE tenant_id = :tid AND deleted_at IS NULL
+                   AND (pending_identity_resolution = 0 OR pending_identity_resolution IS NULL)
+                   AND phone_normalized NOT LIKE \'lid:%\'
+                   AND phone_normalized LIKE :sfx
+                 ORDER BY id ASC LIMIT 1',
+                [':tid' => $tenantId, ':sfx' => '%' . $suffix]
+            );
+        }
 
         $prov = Database::fetch(
             'SELECT id FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL
@@ -334,12 +351,22 @@ class LidResolverService
             }
         }
 
+        // Ha lead real (confirmado) — une provisorio (LID-only) nele.
         if ($prov && $real && (int) $prov['id'] !== (int) $real['id']) {
             self::mergeProvisionalIntoReal($tenantId, (int) $prov['id'], (int) $real['id'], null);
+
+            // Garante que o lead real tenha o LID gravado.
+            Database::query(
+                'UPDATE leads SET whatsapp_lid_jid = :jid
+                 WHERE id = :id AND tenant_id = :tid
+                   AND (whatsapp_lid_jid IS NULL OR whatsapp_lid_jid = \'\')',
+                [':jid' => $lidJid, ':id' => (int) $real['id'], ':tid' => $tenantId]
+            );
 
             return;
         }
 
+        // So temos o provisorio — promove-o a lead confirmado.
         if ($prov && !$real) {
             $pid = (int) $prov['id'];
             Database::update(
@@ -353,9 +380,35 @@ class LidResolverService
                 [':id' => $pid, ':tid' => $tenantId]
             );
             Database::query(
-                'UPDATE conversations SET contact_phone = :cp, lead_id = :lid WHERE tenant_id = :tid AND lead_id = :lid',
+                'UPDATE conversations SET contact_phone = :cp WHERE tenant_id = :tid AND lead_id = :lid',
                 [':cp' => $phoneNormalized, ':lid' => $pid, ':tid' => $tenantId]
             );
+
+            return;
+        }
+
+        // So temos o real — garante que ele tenha o LID associado e propaga
+        // para a conversa existente (evita criar duplicata em futuros inbounds).
+        if (!$prov && $real) {
+            $realId = (int) $real['id'];
+            Database::query(
+                'UPDATE leads SET whatsapp_lid_jid = :jid
+                 WHERE id = :id AND tenant_id = :tid
+                   AND (whatsapp_lid_jid IS NULL OR whatsapp_lid_jid = \'\')',
+                [':jid' => $lidJid, ':id' => $realId, ':tid' => $tenantId]
+            );
+            try {
+                Database::query(
+                    'UPDATE conversations SET whatsapp_lid_jid = :jid
+                     WHERE tenant_id = :tid AND lead_id = :lid
+                       AND (whatsapp_lid_jid IS NULL OR whatsapp_lid_jid = \'\')',
+                    [':jid' => $lidJid, ':tid' => $tenantId, ':lid' => $realId]
+                );
+            } catch (\PDOException $e) {
+                // Pode colidir com uq_conv_tenant_instance_lid se ja existir
+                // outra conversa com esse LID na mesma instancia — ignorar.
+                App::log('[LidResolver] conv.lid update fallback: ' . $e->getMessage());
+            }
         }
     }
 
@@ -389,12 +442,27 @@ class LidResolverService
         foreach ($convs as $conv) {
             $cid = (int) $conv['id'];
             $wid = (int) $conv['whatsapp_instance_id'];
+            $provLidJid = (string) ($conv['whatsapp_lid_jid'] ?? '');
+
             $existing = $targetPhone !== ''
                 ? Database::fetch(
-                    'SELECT id FROM conversations WHERE tenant_id = :tid AND whatsapp_instance_id = :wid AND contact_phone = :cp LIMIT 1',
+                    'SELECT id, whatsapp_lid_jid FROM conversations WHERE tenant_id = :tid AND whatsapp_instance_id = :wid AND contact_phone = :cp LIMIT 1',
                     [':tid' => $tenantId, ':wid' => $wid, ':cp' => $targetPhone]
                 )
                 : null;
+
+            // Fallback: usa sufixo quando ha variante BR do telefone.
+            if (!$existing && $targetPhone !== '' && strlen($targetPhone) >= 8) {
+                $suffix = substr($targetPhone, -8);
+                $existing = Database::fetch(
+                    'SELECT id, whatsapp_lid_jid FROM conversations
+                     WHERE tenant_id = :tid AND whatsapp_instance_id = :wid
+                       AND contact_phone NOT LIKE \'lid:%\'
+                       AND contact_phone LIKE :sfx
+                     ORDER BY id ASC LIMIT 1',
+                    [':tid' => $tenantId, ':wid' => $wid, ':sfx' => '%' . $suffix]
+                );
+            }
 
             if ($existing) {
                 $eid = (int) $existing['id'];
@@ -402,10 +470,30 @@ class LidResolverService
                     'UPDATE messages SET conversation_id = :eid WHERE tenant_id = :tid AND conversation_id = :cid',
                     [':eid' => $eid, ':cid' => $cid, ':tid' => $tenantId]
                 );
+                // Libera o LID da provisional antes de deletar, para nao
+                // violar uq_conv_tenant_instance_lid ao gravar no destino.
+                Database::query(
+                    'UPDATE conversations SET whatsapp_lid_jid = NULL WHERE id = :cid AND tenant_id = :tid',
+                    [':cid' => $cid, ':tid' => $tenantId]
+                );
                 Database::query(
                     'DELETE FROM conversations WHERE id = :cid AND tenant_id = :tid',
                     [':cid' => $cid, ':tid' => $tenantId]
                 );
+
+                // Passa LID e dados do contato para a conversa destino, se estiverem faltando.
+                $updates = [];
+                $params = [':id' => $eid, ':tid' => $tenantId];
+                if ($provLidJid !== '' && empty($existing['whatsapp_lid_jid'])) {
+                    $updates[] = 'whatsapp_lid_jid = :ljid';
+                    $params[':ljid'] = $provLidJid;
+                }
+                if ($updates !== []) {
+                    Database::query(
+                        'UPDATE conversations SET ' . implode(', ', $updates) . ' WHERE id = :id AND tenant_id = :tid',
+                        $params
+                    );
+                }
             } else {
                 $cp = $targetPhone !== '' ? $targetPhone : (string) $conv['contact_phone'];
                 Database::update(
