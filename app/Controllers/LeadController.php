@@ -476,15 +476,29 @@ class LeadController
 
         $updateData = ['stage_id' => $stageId];
 
-        if ($newStage['stage_type'] === 'won') {
+        if ((int) ($lead['pending_identity_resolution'] ?? 0) === 1) {
+            $updateData['pending_identity_resolution'] = 0;
+        }
+
+        $newType = (string) ($newStage['stage_type'] ?? '');
+        $leadStatus = (string) ($lead['status'] ?? 'active');
+
+        if ($newType === 'won') {
             $updateData['status'] = 'won';
             $updateData['won_at'] = date('Y-m-d H:i:s');
-        } elseif ($newStage['stage_type'] === 'lost') {
+        } elseif ($newType === 'lost') {
             $updateData['status'] = 'lost';
             $updateData['lost_at'] = date('Y-m-d H:i:s');
+        } else {
+            if (in_array($leadStatus, ['won', 'lost'], true)) {
+                $updateData['status'] = 'active';
+                $updateData['won_at'] = null;
+                $updateData['lost_at'] = null;
+            }
         }
 
         $user = Session::user();
+        $actorUserId = ($user !== null && isset($user['id'])) ? (int) $user['id'] : null;
 
         try {
             $db = TenantAwareDatabase::getInstance();
@@ -494,7 +508,7 @@ class LeadController
 
             TenantAwareDatabase::insert('lead_events', [
                 'lead_id' => $id,
-                'user_id' => $user['id'],
+                'user_id' => $actorUserId,
                 'event_type' => 'stage_changed',
                 'description' => "Movido de '{$lead['current_stage_name']}' para '{$newStage['name']}'",
                 'metadata_json' => json_encode([
@@ -520,7 +534,7 @@ class LeadController
             }
 
             $response->jsonSuccess([], 'Lead movido com sucesso');
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             if ($db->inTransaction()) {
                 $db->rollBack();
             }

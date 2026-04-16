@@ -63,10 +63,6 @@ const Kanban = {
         root.addEventListener('dragstart', (e) => {
             const card = e.target.closest('.kanban-card');
             if (!card) return;
-            if (card.getAttribute('data-no-drag') === '1') {
-                e.preventDefault();
-                return;
-            }
             const id = card.getAttribute('data-lead-id');
             if (!id) return;
             e.dataTransfer.setData('text/plain', id);
@@ -84,62 +80,6 @@ const Kanban = {
             root.querySelectorAll('[data-kanban-column].kanban-dnd-active').forEach((el) => this.clearColumnDropStyle(el));
         });
 
-        root.addEventListener('dragover', (e) => {
-            if (!this._dragLeadId) return;
-            const col = e.target.closest('[data-kanban-column]');
-            if (!col) return;
-            if (col.getAttribute('data-kanban-no-drop') === '1') {
-                e.preventDefault();
-                e.dataTransfer.dropEffect = 'none';
-                return;
-            }
-            e.preventDefault();
-            e.dataTransfer.dropEffect = 'move';
-            root.querySelectorAll('[data-kanban-column].kanban-dnd-active').forEach((el) => {
-                if (el !== col) this.clearColumnDropStyle(el);
-            });
-            col.classList.add('kanban-dnd-active', 'ring-2', 'ring-primary-400', 'ring-offset-2', 'bg-primary-50/60');
-        });
-
-        root.addEventListener('dragleave', (e) => {
-            const col = e.target.closest('[data-kanban-column]');
-            if (!col) return;
-            const related = e.relatedTarget;
-            if (related && col.contains(related)) return;
-            this.clearColumnDropStyle(col);
-        });
-
-        root.addEventListener('drop', async (e) => {
-            const col = e.target.closest('[data-kanban-column]');
-            if (!col || !this._dragLeadId) return;
-            if (col.getAttribute('data-kanban-no-drop') === '1') {
-                e.preventDefault();
-                this.clearColumnDropStyle(col);
-                App.toast('Use Vincular ou Aceitar na coluna Leads de Entrada', 'info');
-                return;
-            }
-            e.preventDefault();
-            this.clearColumnDropStyle(col);
-            const stageId = col.getAttribute('data-stage-id');
-            const fromStage = e.dataTransfer.getData('application/x-kanban-stage');
-            const leadId = parseInt(this._dragLeadId, 10);
-            if (!stageId || !leadId) return;
-            if (fromStage && String(fromStage) === String(stageId)) {
-                return;
-            }
-            try {
-                const res = await API.leads.moveStage(leadId, parseInt(stageId, 10));
-                if (res.success) {
-                    App.toast('Lead movido', 'success');
-                    this.loadData();
-                } else {
-                    App.toast(res.message || 'Nao foi possivel mover o lead', 'error');
-                }
-            } catch (err) {
-                App.toast(err.message || 'Erro ao mover lead', 'error');
-            }
-        });
-
         root.addEventListener('click', (e) => {
             const card = e.target.closest('.kanban-card[data-lead-id]');
             if (!card || e.target.closest('button')) return;
@@ -151,6 +91,75 @@ const Kanban = {
 
     clearColumnDropStyle(el) {
         el.classList.remove('kanban-dnd-active', 'ring-2', 'ring-primary-400', 'ring-offset-2', 'bg-primary-50/60');
+    },
+
+    /**
+     * dragover/drop na coluna com capture=true para funcionar sobre areas com scroll (filhos bloqueavam o drop).
+     */
+    bindColumnDragAndDrop(column) {
+        column.addEventListener(
+            'dragover',
+            (e) => {
+                if (!this._dragLeadId) return;
+                if (column.getAttribute('data-kanban-no-drop') === '1') {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'none';
+                    return;
+                }
+                e.preventDefault();
+                e.stopPropagation();
+                e.dataTransfer.dropEffect = 'move';
+                document.querySelectorAll('[data-kanban-column].kanban-dnd-active').forEach((el) => {
+                    if (el !== column) this.clearColumnDropStyle(el);
+                });
+                column.classList.add('kanban-dnd-active', 'ring-2', 'ring-primary-400', 'ring-offset-2', 'bg-primary-50/60');
+            },
+            true
+        );
+
+        column.addEventListener(
+            'dragleave',
+            (e) => {
+                if (!this._dragLeadId) return;
+                const related = e.relatedTarget;
+                if (related && column.contains(related)) return;
+                this.clearColumnDropStyle(column);
+            },
+            true
+        );
+
+        column.addEventListener(
+            'drop',
+            async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (!this._dragLeadId) return;
+                this.clearColumnDropStyle(column);
+                if (column.getAttribute('data-kanban-no-drop') === '1') {
+                    App.toast('Use Vincular ou Aceitar na coluna Leads de Entrada', 'info');
+                    return;
+                }
+                const stageIdRaw = column.getAttribute('data-stage-id');
+                const fromStage = e.dataTransfer.getData('application/x-kanban-stage');
+                const leadId = parseInt(this._dragLeadId, 10);
+                if (stageIdRaw === null || stageIdRaw === '' || Number.isNaN(leadId) || leadId < 1) return;
+                if (fromStage !== '' && String(fromStage) === String(stageIdRaw)) return;
+                const stageId = parseInt(stageIdRaw, 10);
+                if (Number.isNaN(stageId) || stageId < 1) return;
+                try {
+                    const res = await API.leads.moveStage(leadId, stageId);
+                    if (res.success) {
+                        App.toast('Lead movido', 'success');
+                        this.loadData();
+                    } else {
+                        App.toast(res.message || 'Nao foi possivel mover o lead', 'error');
+                    }
+                } catch (err) {
+                    App.toast(err.message || err.data?.message || 'Erro ao mover lead', 'error');
+                }
+            },
+            true
+        );
     },
 
     initEntryTriagemUi() {
@@ -580,8 +589,10 @@ const Kanban = {
                 <span class="shrink-0 rounded-full bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-600" title="Leads nesta etapa">${badge}</span>
             </div>
             <div class="border-b border-slate-200/80 px-3 py-2 text-xs text-slate-500">Soma (visivel): ${this.formatCurrency(totalValue)}</div>
-            <div class="kanban-column-scroll min-h-0 flex-1 space-y-2 overflow-y-auto p-3">${cardsHtml || '<p class="text-center text-xs text-slate-400">Vazio</p>'}</div>
+            <div class="kanban-column-scroll flex-1 min-h-[120px] space-y-2 overflow-y-auto overflow-x-hidden p-3">${cardsHtml || '<p class="text-center text-xs text-slate-400">Vazio</p>'}</div>
         `;
+
+        this.bindColumnDragAndDrop(column);
 
         column.querySelectorAll('.kanban-wa-btn').forEach((btn) => {
             btn.addEventListener('click', async (e) => {
@@ -600,7 +611,7 @@ const Kanban = {
         const isOverdue = !isEntry && lead.next_action_at && new Date(lead.next_action_at) < new Date();
         const cardClasses = [
             'kanban-card rounded-lg border border-slate-200 bg-white p-3 shadow-sm transition hover:border-primary-300 hover:shadow-md',
-            isEntry ? 'select-none' : 'cursor-grab active:cursor-grabbing select-none',
+            'cursor-grab active:cursor-grabbing select-none',
         ];
         if (isOverdue) cardClasses.push('border-l-4 border-l-red-500');
         if (!isEntry && lead.temperature === 'hot') cardClasses.push('border-l-4 border-l-amber-500');
@@ -689,10 +700,8 @@ const Kanban = {
                   }</div>`
                 : '';
 
-        const dragAttr = isEntry ? 'draggable="false" data-no-drag="1"' : 'draggable="true"';
-
         return `
-            <div class="${cardClasses.join(' ')}" data-lead-id="${lead.id}" data-stage-id="${stageId}" ${dragAttr}>
+            <div class="${cardClasses.join(' ')}" data-lead-id="${lead.id}" data-stage-id="${stageId}" draggable="true">
                 <div class="text-sm font-semibold leading-snug text-slate-900">${this.escapeHtml(lead.name)}</div>
                 ${waStatusPill}
                 ${phoneLine}
@@ -827,12 +836,25 @@ const Kanban = {
             const lead = leadRes.data.lead;
             const events = evRes.success && evRes.data?.events ? evRes.data.events : [];
 
+            let stages = [];
+            if (lead.pipeline_id) {
+                try {
+                    const pRes = await API.pipelines.get(lead.pipeline_id);
+                    if (pRes.success && Array.isArray(pRes.data?.pipeline?.stages)) {
+                        stages = pRes.data.pipeline.stages;
+                    }
+                } catch (pe) {
+                    console.warn(pe);
+                }
+            }
+
             title.textContent = lead.name;
             subtitle.textContent = [lead.pipeline_name, lead.stage_name].filter(Boolean).join(' · ') || '';
 
             this.setupLeadDetailToolbar(lead);
-            body.innerHTML = this.buildLeadDetailHtml(lead, events);
+            body.innerHTML = this.buildLeadDetailHtml(lead, events, stages);
             this.initLeadDetailTabs(body);
+            this.initLeadDetailStageMover(body, lead, stages);
             this.initLeadDetailFollowUp(body, lead);
             this.initLeadDetailEditForm(body, lead);
         } catch (error) {
@@ -1326,7 +1348,45 @@ const Kanban = {
         }
     },
 
-    buildLeadDetailHtml(lead, events) {
+    initLeadDetailStageMover(bodyEl, lead, stages) {
+        if (!stages || !stages.length) return;
+        const sel = bodyEl.querySelector('#lead-detail-stage-select');
+        const btn = bodyEl.querySelector('#lead-detail-stage-apply');
+        const leadId = lead.id;
+        if (!sel || !btn || !leadId) return;
+
+        btn.addEventListener('click', async () => {
+            const newId = parseInt(sel.value, 10);
+            const curId = parseInt(String(lead.stage_id ?? '0'), 10);
+            if (!newId) {
+                App.toast('Etapa invalida', 'warning');
+                return;
+            }
+            if (newId === curId) {
+                App.toast('O lead ja esta nesta etapa', 'info');
+                return;
+            }
+            btn.disabled = true;
+            try {
+                const res = await API.leads.moveStage(leadId, newId);
+                if (res.success) {
+                    App.toast(res.message || 'Etapa atualizada', 'success');
+                    if (document.querySelector('.kanban-page')) {
+                        await this.loadData();
+                    }
+                    await this.openLeadDetail(leadId);
+                } else {
+                    App.toast(res.message || 'Nao foi possivel mover', 'error');
+                }
+            } catch (e) {
+                App.toast(e.message || e.data?.message || 'Erro ao mover etapa', 'error');
+            } finally {
+                btn.disabled = false;
+            }
+        });
+    },
+
+    buildLeadDetailHtml(lead, events, stages = []) {
         const statusBadge = () => {
             const s = lead.status || 'active';
             if (s === 'won')
@@ -1569,9 +1629,36 @@ const Kanban = {
             </div>
         `;
 
-        // Nova aba Acoes - WhatsApp, observacoes e registro de acoes
+        const stageOpts = (stages || [])
+            .slice()
+            .sort((a, b) => (parseInt(a.position, 10) || 0) - (parseInt(b.position, 10) || 0))
+            .map((s) => {
+                const sid = String(s.id);
+                const cur = String(lead.stage_id ?? '');
+                const sel = sid === cur ? ' selected' : '';
+                return `<option value="${sid}"${sel}>${this.escapeHtml(s.name || '')}</option>`;
+            })
+            .join('');
+
+        const stageMoverBlock =
+            stages && stages.length
+                ? `<div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <div class="text-[11px] font-semibold uppercase tracking-wide text-slate-600">Mover de etapa</div>
+                    <p class="mt-1 text-xs leading-relaxed text-slate-500">Escolha a coluna do Kanban. Não há bloqueio por ordem de etapa; automações configuradas para “mudança de etapa” continuam sendo disparadas.</p>
+                    <div class="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-3">
+                        <div class="min-w-0 flex-1">
+                            <label class="block text-xs font-medium text-slate-700" for="lead-detail-stage-select">Etapa</label>
+                            <select id="lead-detail-stage-select" class="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">${stageOpts}</select>
+                        </div>
+                        <button type="button" id="lead-detail-stage-apply" class="inline-flex shrink-0 items-center justify-center rounded-lg bg-primary-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-primary-700">Aplicar</button>
+                    </div>
+                </div>`
+                : '';
+
+        // Nova aba Acoes - etapa, WhatsApp, observacoes e registro de acoes
         const actionsSection = `
-            <div data-detail-panel="actions" class="hidden text-slate-900">
+            <div data-detail-panel="actions" class="hidden space-y-4 text-slate-900">
+                ${stageMoverBlock}
                 <div class="grid gap-4 lg:grid-cols-5">
                     <div class="space-y-4 lg:col-span-2">
                         ${followUpWhatsapp}
