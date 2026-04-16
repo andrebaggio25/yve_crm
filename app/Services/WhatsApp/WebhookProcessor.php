@@ -258,11 +258,38 @@ class WebhookProcessor
 
         $pushName = (string) ($msg['pushName'] ?? '');
 
-        $lead = Database::fetch(
-            'SELECT id FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL AND phone_normalized = :p LIMIT 1',
-            [':tid' => $tenantId, ':p' => $normalized]
-        );
         $isLidKey = str_starts_with($normalized, 'lid:');
+        $remoteJidFull = (string) ($key['remoteJid'] ?? '');
+
+        $lead = null;
+        if ($isLidKey && $remoteJidFull !== '' && !$resolved['is_group']) {
+            $lead = Database::fetch(
+                'SELECT id FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL
+                 AND JSON_UNQUOTE(JSON_EXTRACT(metadata_json, \'$.whatsapp_jid\')) = :jid
+                 LIMIT 1',
+                [':tid' => $tenantId, ':jid' => $remoteJidFull]
+            );
+        }
+
+        if (!$lead && $isLidKey && $pushName !== '' && !$resolved['is_group']) {
+            $matches = Database::fetchAll(
+                'SELECT id FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL
+                 AND phone IS NOT NULL AND TRIM(phone) <> \'\'
+                 AND name = :push
+                 LIMIT 3',
+                [':tid' => $tenantId, ':push' => $pushName]
+            );
+            if (count($matches) === 1) {
+                $lead = $matches[0];
+            }
+        }
+
+        if (!$lead) {
+            $lead = Database::fetch(
+                'SELECT id FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL AND phone_normalized = :p LIMIT 1',
+                [':tid' => $tenantId, ':p' => $normalized]
+            );
+        }
         if (!$lead && strlen($normalized) >= 8 && !$isLidKey) {
             $suffix = substr($normalized, -8);
             $lead = Database::fetch(
@@ -272,6 +299,10 @@ class WebhookProcessor
         }
 
         $leadId = $lead ? (int) $lead['id'] : null;
+
+        if ($leadId !== null && $isLidKey && $remoteJidFull !== '' && str_ends_with($remoteJidFull, '@lid')) {
+            $this->persistLeadWhatsappJid($tenantId, $leadId, $remoteJidFull);
+        }
 
         if ($leadId === null && !$resolved['is_group']) {
             $settings = Database::fetch('SELECT settings_json FROM tenants WHERE id = :id', [':id' => $tenantId]);
@@ -609,5 +640,40 @@ class WebhookProcessor
         );
 
         return (int) Database::getInstance()->lastInsertId();
+    }
+
+    /**
+     * Grava JID @lid no metadata do lead para matching de mensagens futuras (importacao/disparo).
+     */
+    private function persistLeadWhatsappJid(int $tenantId, int $leadId, string $whatsappJid): void
+    {
+        if ($leadId <= 0 || $whatsappJid === '') {
+            return;
+        }
+
+        $row = Database::fetch(
+            'SELECT metadata_json FROM leads WHERE id = :id AND tenant_id = :tid LIMIT 1',
+            [':id' => $leadId, ':tid' => $tenantId]
+        );
+        if (!$row) {
+            return;
+        }
+
+        $metaRaw = $row['metadata_json'] ?? null;
+        $meta = [];
+        if ($metaRaw !== null && $metaRaw !== '') {
+            $meta = is_string($metaRaw) ? (json_decode($metaRaw, true) ?: []) : (is_array($metaRaw) ? $metaRaw : []);
+        }
+        if (($meta['whatsapp_jid'] ?? '') === $whatsappJid) {
+            return;
+        }
+        $meta['whatsapp_jid'] = $whatsappJid;
+
+        Database::update(
+            'leads',
+            ['metadata_json' => json_encode($meta, JSON_UNESCAPED_UNICODE)],
+            'id = :id AND tenant_id = :tid',
+            [':id' => $leadId, ':tid' => $tenantId]
+        );
     }
 }

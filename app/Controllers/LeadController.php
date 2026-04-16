@@ -23,9 +23,9 @@ class LeadController
             "SELECT l.*, u.name as assigned_user_name, p.name as pipeline_name,
                     ps.name as stage_name, ps.stage_type as stage_type, ps.color_token as stage_color
              FROM leads l
-             LEFT JOIN users u ON l.assigned_user_id = u.id AND u.tenant_id = :tenant_id
-             LEFT JOIN pipelines p ON l.pipeline_id = p.id AND p.tenant_id = :tenant_id
-             LEFT JOIN pipeline_stages ps ON l.stage_id = ps.id AND ps.tenant_id = :tenant_id
+             LEFT JOIN users u ON l.assigned_user_id = u.id
+             LEFT JOIN pipelines p ON l.pipeline_id = p.id
+             LEFT JOIN pipeline_stages ps ON l.stage_id = ps.id
              WHERE l.id = :id AND l.deleted_at IS NULL AND l.tenant_id = :tenant_id",
             TenantAwareDatabase::mergeTenantParams([':id' => $id])
         );
@@ -37,7 +37,7 @@ class LeadController
         $lead['tags'] = TenantAwareDatabase::fetchAll(
             "SELECT t.id, t.name, t.color 
              FROM lead_tags t
-             JOIN lead_tag_items ti ON t.id = ti.tag_id AND ti.tenant_id = :tenant_id
+             JOIN lead_tag_items ti ON t.id = ti.tag_id
              WHERE ti.lead_id = :lead_id AND t.tenant_id = :tenant_id",
             TenantAwareDatabase::mergeTenantParams([':lead_id' => $id])
         );
@@ -85,8 +85,8 @@ class LeadController
             $leads = TenantAwareDatabase::fetchAll(
                 "SELECT l.*, u.name as assigned_user_name, ps.name as stage_name, ps.color_token as stage_color
                  FROM leads l
-                 LEFT JOIN users u ON l.assigned_user_id = u.id AND u.tenant_id = :tenant_id
-                 LEFT JOIN pipeline_stages ps ON l.stage_id = ps.id AND ps.tenant_id = :tenant_id
+                 LEFT JOIN users u ON l.assigned_user_id = u.id
+                 LEFT JOIN pipeline_stages ps ON l.stage_id = ps.id
                  WHERE {$whereSql}
                  ORDER BY l.created_at DESC
                  LIMIT {$limit} OFFSET {$offset}",
@@ -220,7 +220,7 @@ class LeadController
             $lead = TenantAwareDatabase::fetch(
                 "SELECT l.*, u.name as assigned_user_name 
                  FROM leads l
-                 LEFT JOIN users u ON l.assigned_user_id = u.id AND u.tenant_id = :tenant_id
+                 LEFT JOIN users u ON l.assigned_user_id = u.id
                  WHERE l.id = :id AND l.tenant_id = :tenant_id",
                 TenantAwareDatabase::mergeTenantParams([':id' => $leadId])
             );
@@ -428,7 +428,7 @@ class LeadController
         $lead = TenantAwareDatabase::fetch(
             "SELECT l.*, ps.name as current_stage_name 
              FROM leads l
-             LEFT JOIN pipeline_stages ps ON l.stage_id = ps.id AND ps.tenant_id = :tenant_id
+             LEFT JOIN pipeline_stages ps ON l.stage_id = ps.id
              WHERE l.id = :id AND l.deleted_at IS NULL AND l.tenant_id = :tenant_id",
             TenantAwareDatabase::mergeTenantParams([':id' => $id])
         );
@@ -568,7 +568,7 @@ class LeadController
             $events = TenantAwareDatabase::fetchAll(
                 "SELECT e.*, u.name as user_name
                  FROM lead_events e
-                 LEFT JOIN users u ON e.user_id = u.id AND u.tenant_id = :tenant_id
+                 LEFT JOIN users u ON e.user_id = u.id
                  WHERE e.lead_id = :lead_id AND e.tenant_id = :tenant_id
                  ORDER BY e.created_at ASC
                  LIMIT 500",
@@ -644,7 +644,7 @@ class LeadController
         $lead = TenantAwareDatabase::fetch(
             "SELECT l.*, ps.stage_type, ps.name as stage_name 
              FROM leads l
-             LEFT JOIN pipeline_stages ps ON l.stage_id = ps.id AND ps.tenant_id = :tenant_id
+             LEFT JOIN pipeline_stages ps ON l.stage_id = ps.id
              WHERE l.id = :id AND l.deleted_at IS NULL AND l.tenant_id = :tenant_id",
             TenantAwareDatabase::mergeTenantParams([':id' => $id])
         );
@@ -941,7 +941,7 @@ class LeadController
             $lead = TenantAwareDatabase::fetch(
                 "SELECT l.*, ps.stage_type, ps.name as stage_name 
                  FROM leads l
-                 LEFT JOIN pipeline_stages ps ON l.stage_id = ps.id AND ps.tenant_id = :tenant_id
+                 LEFT JOIN pipeline_stages ps ON l.stage_id = ps.id
                  WHERE l.id = :id AND l.deleted_at IS NULL AND l.tenant_id = :tenant_id",
                 TenantAwareDatabase::mergeTenantParams([':id' => $id])
             );

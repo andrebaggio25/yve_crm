@@ -107,7 +107,6 @@ class ChatService
             return ['ok' => false, 'message' => 'Telefone invalido'];
         }
 
-        // Se o número é um @lid, tenta resolver para telefone real via contacts API
         if (str_ends_with($numberForEvolution, '@lid')) {
             $evo        = new EvolutionApiService();
             $contactRes = $evo->fetchContactByJid(
@@ -130,19 +129,21 @@ class ChatService
             if ($phoneJid !== '') {
                 $localPart          = explode('@', $phoneJid)[0] ?? '';
                 $numberForEvolution = preg_replace('/\D/', '', $localPart) ?: $phoneJid;
-                // #region agent log
                 DebugAgentLog::write('SEND_LID_RESOLVED', 'ChatService::sendText', 'LID resolvido para numero real ao enviar', [
                     'phone_jid'  => DebugAgentLog::maskRecipient($phoneJid),
                     'num_len'    => strlen($numberForEvolution),
                 ]);
-                // #endregion
             } else {
-                // #region agent log
-                DebugAgentLog::write('SEND_LID_UNRESOLVED', 'ChatService::sendText', 'LID sem telefone no contato — tentando enviar com JID lid diretamente', [
+                DebugAgentLog::write('SEND_LID_UNRESOLVED', 'ChatService::sendText', 'LID sem telefone — envio via Evolution bloqueado', [
                     'lid_num' => DebugAgentLog::maskRecipient($numberForEvolution),
                 ]);
-                // #endregion
-                // Mantém numberForEvolution com @lid para tentar mesmo assim (Evolution pode rotear)
+
+                return [
+                    'ok'      => false,
+                    'message' => 'Este contato usa identificacao privada do WhatsApp (LID). '
+                        . 'Cadastre o telefone no lead (importacao/planilha) e tente novamente, '
+                        . 'ou inicie a conversa com um disparo pelo telefone real para o CRM vincular o LID ao lead.',
+                ];
             }
         }
 
@@ -211,6 +212,15 @@ class ChatService
                 'id = :id',
                 [':id' => $mid]
             );
+
+            $body = $res['body'] ?? null;
+            if (is_array($body) && isset($body['key']['remoteJid'])) {
+                $sentJid = (string) $body['key']['remoteJid'];
+                $leadIdForJid = (int) ($conv['lead_id'] ?? 0);
+                if ($sentJid !== '' && str_ends_with($sentJid, '@lid') && $leadIdForJid > 0) {
+                    $this->mergeWhatsappJidIntoLead($leadIdForJid, $sentJid);
+                }
+            }
         } else {
             TenantAwareDatabase::update(
                 'messages',
@@ -252,8 +262,56 @@ class ChatService
         return is_string($metaRaw) ? (json_decode($metaRaw, true) ?: []) : (is_array($metaRaw) ? $metaRaw : []);
     }
 
+    private function mergeWhatsappJidIntoLead(int $leadId, string $whatsappJid): void
+    {
+        if ($leadId <= 0 || $whatsappJid === '') {
+            return;
+        }
+
+        $row = TenantAwareDatabase::fetch(
+            'SELECT metadata_json FROM leads WHERE id = :id AND tenant_id = :tenant_id LIMIT 1',
+            TenantAwareDatabase::mergeTenantParams([':id' => $leadId])
+        );
+        if (!$row) {
+            return;
+        }
+
+        $metaRaw = $row['metadata_json'] ?? null;
+        $meta = [];
+        if ($metaRaw !== null && $metaRaw !== '') {
+            $meta = is_string($metaRaw) ? (json_decode($metaRaw, true) ?: []) : (is_array($metaRaw) ? $metaRaw : []);
+        }
+        $meta['whatsapp_jid'] = $whatsappJid;
+
+        TenantAwareDatabase::update(
+            'leads',
+            ['metadata_json' => json_encode($meta, JSON_UNESCAPED_UNICODE)],
+            'id = :id',
+            [':id' => $leadId]
+        );
+    }
+
     private function evolutionRecipientNumber(array $conv): string
     {
+        $cp = (string) ($conv['contact_phone'] ?? '');
+        $leadId = (int) ($conv['lead_id'] ?? 0);
+        if (str_starts_with($cp, 'lid:') && $leadId > 0) {
+            $lead = TenantAwareDatabase::fetch(
+                'SELECT phone, phone_normalized FROM leads WHERE id = :id AND tenant_id = :tenant_id LIMIT 1',
+                TenantAwareDatabase::mergeTenantParams([':id' => $leadId])
+            );
+            if ($lead) {
+                $digits = preg_replace('/\D/', '', (string) ($lead['phone'] ?? ''));
+                if ($digits !== '') {
+                    return $digits;
+                }
+                $pn = (string) ($lead['phone_normalized'] ?? '');
+                if ($pn !== '' && !str_starts_with($pn, 'lid:')) {
+                    return preg_replace('/\D/', '', $pn) ?: $pn;
+                }
+            }
+        }
+
         $meta = $this->conversationMetadata($conv);
 
         $remoteJid = (string) ($meta['wa_remote_jid'] ?? '');
