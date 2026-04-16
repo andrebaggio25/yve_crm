@@ -99,8 +99,9 @@ class ChatService
         }
 
         $tid = (int) TenantContext::getEffectiveTenantId();
+        // c.* ja traz whatsapp_lid_jid, contact_avatar_* etc.
         $conv = TenantAwareDatabase::fetch(
-            'SELECT c.*, w.api_url, w.api_key, w.instance_name 
+            'SELECT c.*, w.api_url, w.api_key, w.instance_name
              FROM conversations c
              JOIN whatsapp_instances w ON w.id = c.whatsapp_instance_id AND w.tenant_id = :wid_tid
              WHERE c.id = :cid AND c.tenant_id = :tenant_id',
@@ -677,13 +678,37 @@ class ChatService
         }
     }
 
+    /**
+     * Prioriza telefones reais (lead.phone, contact_phone, phone jids em meta,
+     * mapping LID->telefone) e so recorre ao @lid como ultimo caso. Isso evita
+     * que o envio falhe quando a conversa recebeu um inbound @lid anterior
+     * (metadata_json.wa_remote_jid) mesmo tendo phone real cadastrado.
+     */
     private function evolutionRecipientNumber(array $conv): string
     {
         $cp = (string) ($conv['contact_phone'] ?? '');
         $leadId = (int) ($conv['lead_id'] ?? 0);
-        if (str_starts_with($cp, 'lid:') && $leadId > 0) {
+        $meta = $this->conversationMetadata($conv);
+
+        $isPhone = static function (string $jid): bool {
+            return $jid !== '' && (str_ends_with($jid, '@s.whatsapp.net') || str_ends_with($jid, '@c.us'));
+        };
+        $digitsFromJid = static function (string $jid): string {
+            $local = explode('@', $jid)[0] ?? '';
+
+            return preg_replace('/\D/', '', $local) ?: $local;
+        };
+
+        // 1) Grupos permanecem como JID @g.us.
+        $remoteJid = (string) ($meta['wa_remote_jid'] ?? '');
+        if ($remoteJid !== '' && str_ends_with($remoteJid, '@g.us')) {
+            return $remoteJid;
+        }
+
+        // 2) Telefone do lead (mais confiavel para primeiro disparo).
+        if ($leadId > 0) {
             $lead = TenantAwareDatabase::fetch(
-                'SELECT phone, phone_normalized FROM leads WHERE id = :id AND tenant_id = :tenant_id LIMIT 1',
+                'SELECT phone, phone_normalized, whatsapp_lid_jid FROM leads WHERE id = :id AND tenant_id = :tenant_id LIMIT 1',
                 TenantAwareDatabase::mergeTenantParams([':id' => $leadId])
             );
             if ($lead) {
@@ -698,28 +723,39 @@ class ChatService
             }
         }
 
-        $meta = $this->conversationMetadata($conv);
-
-        $remoteJid = (string) ($meta['wa_remote_jid'] ?? '');
-        if ($remoteJid !== '' && str_ends_with($remoteJid, '@g.us')) {
-            return $remoteJid;
+        // 3) contact_phone direto (telefone, nao lid:).
+        if ($cp !== '' && !str_starts_with($cp, 'lid:')) {
+            $d = preg_replace('/\D/', '', $cp) ?: '';
+            if ($d !== '') {
+                return $d;
+            }
         }
 
+        // 4) JID de telefone capturado em meta (remoteJid / remoteJidAlt).
         $alt = (string) ($meta['wa_remote_jid_alt'] ?? '');
-        if ($alt !== '' && (str_ends_with($alt, '@s.whatsapp.net') || str_ends_with($alt, '@c.us'))) {
-            $local = explode('@', $alt)[0] ?? '';
-
-            return preg_replace('/\D/', '', $local) ?: $alt;
+        if ($isPhone($alt)) {
+            return $digitsFromJid($alt);
+        }
+        if ($isPhone($remoteJid)) {
+            return $digitsFromJid($remoteJid);
         }
 
-        if ($alt !== '' && str_contains($alt, '@')) {
-            return $alt;
+        // 5) Mapping reverso do LID (se tivermos aprendido telefone via webhook).
+        $lidJid = '';
+        if ($remoteJid !== '' && str_ends_with($remoteJid, '@lid')) {
+            $lidJid = $remoteJid;
+        } elseif (!empty($conv['whatsapp_lid_jid']) && str_ends_with((string) $conv['whatsapp_lid_jid'], '@lid')) {
+            $lidJid = (string) $conv['whatsapp_lid_jid'];
+        }
+        if ($lidJid !== '') {
+            $tenantId = (int) TenantContext::getEffectiveTenantId();
+            $mapped = LidResolverService::getMappingByLid($tenantId, $lidJid);
+            if ($mapped && !empty($mapped['phone_normalized']) && !str_starts_with((string) $mapped['phone_normalized'], 'lid:')) {
+                return preg_replace('/\D/', '', (string) $mapped['phone_normalized']) ?: (string) $mapped['phone_normalized'];
+            }
         }
 
-        if ($remoteJid !== '' && str_contains($remoteJid, '@')) {
-            return $remoteJid;
-        }
-
+        // 6) wa_last_send_number (historico).
         $last = (string) ($meta['wa_last_send_number'] ?? '');
         if ($last !== '' && str_contains($last, '@')) {
             return $last;
@@ -728,7 +764,10 @@ class ChatService
             return preg_replace('/\D/', '', $last) ?: $last;
         }
 
-        $cp = (string) ($conv['contact_phone'] ?? '');
+        // 7) Ultimo recurso: @lid (forca findContacts no sendText).
+        if ($lidJid !== '') {
+            return $lidJid;
+        }
         if (str_starts_with($cp, 'lid:')) {
             $loc = preg_replace('/\D/', '', substr($cp, 4)) ?: '';
 
