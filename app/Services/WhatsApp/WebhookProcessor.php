@@ -317,18 +317,21 @@ class WebhookProcessor
             $convId = (int) $conv['id'];
             $unread = (int) $conv['unread_count'] + 1;
             $mergedMeta = $this->mergeConversationMetadata($conv['metadata_json'] ?? null, $resolved['wa_meta']);
-            Database::query(
-                'UPDATE conversations SET lead_id = COALESCE(lead_id, :lid), last_message_at = NOW(), last_message_preview = :preview, unread_count = :unread, contact_push_name = COALESCE(:push, contact_push_name), metadata_json = :meta WHERE id = :id AND tenant_id = :tid',
-                [
-                    ':id' => $convId,
-                    ':tid' => $tenantId,
-                    ':lid' => $leadId,
-                    ':preview' => mb_substr($text ?: '[' . $type . ']', 0, 200),
-                    ':unread' => $unread,
-                    ':push' => $pushName ?: null,
-                    ':meta' => json_encode($mergedMeta, JSON_UNESCAPED_UNICODE),
-                ]
-            );
+            $sqlPush = ($pushName !== '' && $pushName !== null)
+                ? 'UPDATE conversations SET lead_id = COALESCE(lead_id, :lid), last_message_at = NOW(), last_message_preview = :preview, unread_count = :unread, contact_push_name = :push, metadata_json = :meta WHERE id = :id AND tenant_id = :tid'
+                : 'UPDATE conversations SET lead_id = COALESCE(lead_id, :lid), last_message_at = NOW(), last_message_preview = :preview, unread_count = :unread, metadata_json = :meta WHERE id = :id AND tenant_id = :tid';
+            $paramsPush = [
+                ':id' => $convId,
+                ':tid' => $tenantId,
+                ':lid' => $leadId,
+                ':preview' => mb_substr($text ?: '[' . $type . ']', 0, 200),
+                ':unread' => $unread,
+                ':meta' => json_encode($mergedMeta, JSON_UNESCAPED_UNICODE),
+            ];
+            if ($pushName !== '' && $pushName !== null) {
+                $paramsPush[':push'] = $pushName;
+            }
+            Database::query($sqlPush, $paramsPush);
             App::log("[WebhookProcessor] conversa atualizada id={$convId} unread={$unread}");
         }
 

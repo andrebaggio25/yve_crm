@@ -367,14 +367,24 @@ class ChatService
         );
         if ($byLead) {
             $cid = (int) $byLead['id'];
-            TenantAwareDatabase::query(
-                'UPDATE conversations SET contact_phone = :cp, contact_name = COALESCE(NULLIF(:name, \'\'), contact_name) WHERE id = :id AND tenant_id = :tenant_id',
-                TenantAwareDatabase::mergeTenantParams([
-                    ':id' => $cid,
-                    ':cp' => $contactPhone,
-                    ':name' => $contactName,
-                ])
-            );
+            if ($contactName !== '' && $contactName !== null) {
+                TenantAwareDatabase::query(
+                    'UPDATE conversations SET contact_phone = :cp, contact_name = :name WHERE id = :id AND tenant_id = :tenant_id',
+                    TenantAwareDatabase::mergeTenantParams([
+                        ':id' => $cid,
+                        ':cp' => $contactPhone,
+                        ':name' => $contactName,
+                    ])
+                );
+            } else {
+                TenantAwareDatabase::query(
+                    'UPDATE conversations SET contact_phone = :cp WHERE id = :id AND tenant_id = :tenant_id',
+                    TenantAwareDatabase::mergeTenantParams([
+                        ':id' => $cid,
+                        ':cp' => $contactPhone,
+                    ])
+                );
+            }
 
             return $cid;
         }
@@ -388,14 +398,24 @@ class ChatService
         );
         if ($byPhone) {
             $cid = (int) $byPhone['id'];
-            TenantAwareDatabase::query(
-                'UPDATE conversations SET lead_id = :lid, contact_name = COALESCE(NULLIF(:name, \'\'), contact_name) WHERE id = :id AND tenant_id = :tenant_id',
-                TenantAwareDatabase::mergeTenantParams([
-                    ':id' => $cid,
-                    ':lid' => $leadId,
-                    ':name' => $contactName,
-                ])
-            );
+            if ($contactName !== '' && $contactName !== null) {
+                TenantAwareDatabase::query(
+                    'UPDATE conversations SET lead_id = :lid, contact_name = :name WHERE id = :id AND tenant_id = :tenant_id',
+                    TenantAwareDatabase::mergeTenantParams([
+                        ':id' => $cid,
+                        ':lid' => $leadId,
+                        ':name' => $contactName,
+                    ])
+                );
+            } else {
+                TenantAwareDatabase::query(
+                    'UPDATE conversations SET lead_id = :lid WHERE id = :id AND tenant_id = :tenant_id',
+                    TenantAwareDatabase::mergeTenantParams([
+                        ':id' => $cid,
+                        ':lid' => $leadId,
+                    ])
+                );
+            }
 
             return $cid;
         }
@@ -421,14 +441,24 @@ class ChatService
                 );
                 if ($dup) {
                     $cid = (int) $dup['id'];
-                    TenantAwareDatabase::query(
-                        'UPDATE conversations SET lead_id = :lid, contact_name = COALESCE(NULLIF(:name, \'\'), contact_name) WHERE id = :id AND tenant_id = :tenant_id',
-                        TenantAwareDatabase::mergeTenantParams([
-                            ':id' => $cid,
-                            ':lid' => $leadId,
-                            ':name' => $contactName,
-                        ])
-                    );
+                    if ($contactName !== '' && $contactName !== null) {
+                        TenantAwareDatabase::query(
+                            'UPDATE conversations SET lead_id = :lid, contact_name = :name WHERE id = :id AND tenant_id = :tenant_id',
+                            TenantAwareDatabase::mergeTenantParams([
+                                ':id' => $cid,
+                                ':lid' => $leadId,
+                                ':name' => $contactName,
+                            ])
+                        );
+                    } else {
+                        TenantAwareDatabase::query(
+                            'UPDATE conversations SET lead_id = :lid WHERE id = :id AND tenant_id = :tenant_id',
+                            TenantAwareDatabase::mergeTenantParams([
+                                ':id' => $cid,
+                                ':lid' => $leadId,
+                            ])
+                        );
+                    }
 
                     return $cid;
                 }
