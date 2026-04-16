@@ -27,6 +27,14 @@ class WebhookProcessor
             return;
         }
 
+        // CONTACTS_* e CHATS_* fornecem par (jid, lid, profilePicUrl) silenciosamente.
+        if (str_contains($eventLower, 'contacts') || str_contains($eventLower, 'chats')) {
+            App::log('[WebhookProcessor] -> handleContactsOrChats');
+            $this->handleContactsOrChats($payload, $tenantId, $whatsappInstanceId);
+
+            return;
+        }
+
         $data = $payload['data'] ?? null;
         $looksLikeMessage = is_array($data) && isset($data['key']) && is_array($data['key']);
 
@@ -46,7 +54,153 @@ class WebhookProcessor
             return;
         }
 
-        App::log('[WebhookProcessor] AVISO: payload nao reconhecido (sem connection/messages/key)');
+        App::log('[WebhookProcessor] AVISO: payload nao reconhecido (sem connection/messages/key/contacts/chats)');
+    }
+
+    /**
+     * Extrai pares (jid de telefone, jid LID, foto, pushName) de eventos
+     * CONTACTS_UPSERT|UPDATE / CHATS_UPSERT|UPDATE da Evolution.
+     * Persiste mapping LID<->telefone, enriquece leads.whatsapp_lid_jid
+     * e atualiza foto/pushName nas conversas existentes. Nao cria leads.
+     */
+    private function handleContactsOrChats(array $payload, int $tenantId, int $whatsappInstanceId): void
+    {
+        $data = $payload['data'] ?? null;
+        $items = [];
+        if (is_array($data)) {
+            if (isset($data['id']) || isset($data['remoteJid']) || isset($data['jid'])) {
+                $items = [$data];
+            } elseif (isset($data['contacts']) && is_array($data['contacts'])) {
+                $items = $data['contacts'];
+            } elseif (isset($data['chats']) && is_array($data['chats'])) {
+                $items = $data['chats'];
+            } elseif (array_is_list($data)) {
+                $items = $data;
+            }
+        }
+
+        if ($items === []) {
+            App::log('[WebhookProcessor] contacts/chats sem itens processaveis');
+
+            return;
+        }
+
+        foreach ($items as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            $jid = '';
+            foreach (['id', 'remoteJid', 'jid'] as $field) {
+                $candidate = isset($item[$field]) ? (string) $item[$field] : '';
+                if ($candidate !== '') {
+                    $jid = $candidate;
+                    break;
+                }
+            }
+
+            $lidJid = '';
+            foreach (['lid', 'lidJid', 'linkedId'] as $field) {
+                $candidate = isset($item[$field]) ? (string) $item[$field] : '';
+                if ($candidate !== '' && str_ends_with($candidate, '@lid')) {
+                    $lidJid = $candidate;
+                    break;
+                }
+            }
+            if ($lidJid === '' && $jid !== '' && str_ends_with($jid, '@lid')) {
+                $lidJid = $jid;
+            }
+
+            $phoneJid = '';
+            if ($jid !== '' && (str_ends_with($jid, '@s.whatsapp.net') || str_ends_with($jid, '@c.us'))) {
+                $phoneJid = $jid;
+            }
+
+            $phoneNormalized = '';
+            if ($phoneJid !== '') {
+                $local = explode('@', $phoneJid)[0] ?? '';
+                $digits = preg_replace('/\D/', '', $local) ?: $local;
+                $phoneNormalized = PhoneHelper::normalize($digits) ?: $digits;
+            }
+
+            $pushName = isset($item['pushName']) ? (string) $item['pushName'] : (isset($item['name']) ? (string) $item['name'] : '');
+            $profilePicUrl = '';
+            foreach (['profilePicUrl', 'profilePictureUrl', 'pictureUrl'] as $field) {
+                $candidate = isset($item[$field]) ? (string) $item[$field] : '';
+                if ($candidate !== '' && preg_match('#^https?://#i', $candidate) === 1) {
+                    $profilePicUrl = $candidate;
+                    break;
+                }
+            }
+
+            // Mapping LID<->telefone: so quando temos ambos
+            if ($lidJid !== '' && $phoneNormalized !== '') {
+                LidResolverService::storeMapping(
+                    $tenantId,
+                    $lidJid,
+                    $phoneNormalized,
+                    $phoneJid !== '' ? $phoneJid : null,
+                    'webhook_contacts_chats'
+                );
+                LidResolverService::reconcileLeadsOnMapping($tenantId, $lidJid, $phoneNormalized);
+            }
+
+            // Atualiza lead que ja exista com este telefone ou LID
+            if ($lidJid !== '') {
+                $lead = null;
+                if ($phoneNormalized !== '') {
+                    $lead = Database::fetch(
+                        'SELECT id, whatsapp_lid_jid FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL AND phone_normalized = :pn LIMIT 1',
+                        [':tid' => $tenantId, ':pn' => $phoneNormalized]
+                    );
+                }
+                if (!$lead) {
+                    $lead = Database::fetch(
+                        'SELECT id, whatsapp_lid_jid FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL AND whatsapp_lid_jid = :jid LIMIT 1',
+                        [':tid' => $tenantId, ':jid' => $lidJid]
+                    );
+                }
+                if ($lead && (string) ($lead['whatsapp_lid_jid'] ?? '') !== $lidJid) {
+                    $this->persistLeadWhatsappJid($tenantId, (int) $lead['id'], $lidJid);
+                }
+            }
+
+            // Atualiza conversations com foto / pushName quando conseguimos identificar.
+            if ($profilePicUrl !== '' || $pushName !== '') {
+                $updates = [];
+                $params = [':tid' => $tenantId, ':wid' => $whatsappInstanceId];
+                if ($profilePicUrl !== '') {
+                    $updates[] = 'contact_avatar_url = :pic';
+                    $updates[] = 'contact_avatar_updated_at = NOW()';
+                    $params[':pic'] = $profilePicUrl;
+                }
+                if ($pushName !== '') {
+                    $updates[] = 'contact_push_name = :push';
+                    $params[':push'] = $pushName;
+                }
+
+                if ($updates !== []) {
+                    $setSql = implode(', ', $updates);
+                    if ($lidJid !== '') {
+                        $p = $params;
+                        $p[':lid_jid'] = $lidJid;
+                        Database::query(
+                            "UPDATE conversations SET {$setSql}
+                             WHERE tenant_id = :tid AND whatsapp_instance_id = :wid AND whatsapp_lid_jid = :lid_jid",
+                            $p
+                        );
+                    }
+                    if ($phoneNormalized !== '') {
+                        $p = $params;
+                        $p[':phone'] = $phoneNormalized;
+                        Database::query(
+                            "UPDATE conversations SET {$setSql}
+                             WHERE tenant_id = :tid AND whatsapp_instance_id = :wid AND contact_phone = :phone",
+                            $p
+                        );
+                    }
+                }
+            }
+        }
     }
 
     private function handleConnection(array $payload, int $tenantId, int $whatsappInstanceId): void
@@ -224,14 +378,13 @@ class WebhookProcessor
 
         $isLidKey = str_starts_with($normalized, 'lid:');
         $remoteJidFull = (string) ($key['remoteJid'] ?? '');
+        $lidJid = ($remoteJidFull !== '' && str_ends_with($remoteJidFull, '@lid')) ? $remoteJidFull : null;
 
         $lead = null;
-        if ($isLidKey && $remoteJidFull !== '' && !$resolved['is_group']) {
+        if ($lidJid !== null && !$resolved['is_group']) {
             $lead = Database::fetch(
-                'SELECT id FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL
-                 AND BINARY JSON_UNQUOTE(JSON_EXTRACT(metadata_json, \'$.whatsapp_jid\')) = BINARY :jid
-                 LIMIT 1',
-                [':tid' => $tenantId, ':jid' => $remoteJidFull]
+                'SELECT id FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL AND whatsapp_lid_jid = :jid LIMIT 1',
+                [':tid' => $tenantId, ':jid' => $lidJid]
             );
         }
 
@@ -269,15 +422,15 @@ class WebhookProcessor
             $whatsappInstanceId,
             $normalized,
             $leadId,
-            $remoteJidFull,
+            $lidJid,
             (bool) $resolved['is_group']
         );
         if ($conv && isset($conv['lead_id']) && (int) $conv['lead_id'] > 0 && $leadId === null) {
             $leadId = (int) $conv['lead_id'];
         }
 
-        if ($leadId !== null && $isLidKey && $remoteJidFull !== '' && str_ends_with($remoteJidFull, '@lid')) {
-            $this->persistLeadWhatsappJid($tenantId, $leadId, $remoteJidFull);
+        if ($leadId !== null && $lidJid !== null) {
+            $this->persistLeadWhatsappJid($tenantId, $leadId, $lidJid);
         }
 
         if ($leadId === null && !$resolved['is_group']) {
@@ -305,26 +458,21 @@ class WebhookProcessor
 
         if (!$conv && $leadId !== null && $leadId > 0) {
             $conv = Database::fetch(
-                'SELECT id, unread_count, metadata_json, lead_id, contact_phone FROM conversations WHERE tenant_id = :tid AND whatsapp_instance_id = :wid AND lead_id = :lid LIMIT 1',
+                'SELECT id, unread_count, metadata_json, lead_id, contact_phone, whatsapp_lid_jid FROM conversations WHERE tenant_id = :tid AND whatsapp_instance_id = :wid AND lead_id = :lid LIMIT 1',
                 [':tid' => $tenantId, ':wid' => $whatsappInstanceId, ':lid' => $leadId]
             );
         }
 
         if (!$conv) {
-            Database::query(
-                'INSERT INTO conversations (tenant_id, lead_id, whatsapp_instance_id, contact_phone, contact_push_name, status, last_message_at, last_message_preview, unread_count, metadata_json)
-                 VALUES (:tid, :lid, :wid, :phone, :push, \'open\', NOW(), :preview, 1, :meta)',
-                [
-                    ':tid' => $tenantId,
-                    ':lid' => $leadId,
-                    ':wid' => $whatsappInstanceId,
-                    ':phone' => $normalized,
-                    ':push' => $pushName ?: null,
-                    ':preview' => mb_substr($text ?: '[' . $type . ']', 0, 200),
-                    ':meta' => $waMetaJson,
-                ]
-            );
-            $convId = (int) Database::getInstance()->lastInsertId();
+            $convId = $this->insertConversationSafe($tenantId, $whatsappInstanceId, [
+                'lead_id' => $leadId,
+                'contact_phone' => $normalized,
+                'contact_push_name' => $pushName !== '' ? $pushName : null,
+                'whatsapp_lid_jid' => $lidJid,
+                'last_message_preview' => mb_substr($text ?: '[' . $type . ']', 0, 200),
+                'unread_count' => 1,
+                'metadata_json' => $waMetaJson,
+            ]);
             $unread = 1;
             App::log("[WebhookProcessor] conversa criada id={$convId} lead_id=" . ($leadId ?? 'null'));
         } else {
@@ -333,13 +481,17 @@ class WebhookProcessor
             $mergedMeta = $this->mergeConversationMetadata($conv['metadata_json'] ?? null, $resolved['wa_meta']);
             $existingLeadId = isset($conv['lead_id']) && (int) $conv['lead_id'] > 0 ? (int) $conv['lead_id'] : null;
             $leadIdForUpdate = $existingLeadId ?? $leadId;
+            $existingLid = isset($conv['whatsapp_lid_jid']) ? (string) $conv['whatsapp_lid_jid'] : '';
+            $lidForUpdate = $existingLid !== '' ? $existingLid : $lidJid;
+
             $sqlPush = ($pushName !== '' && $pushName !== null)
-                ? 'UPDATE conversations SET lead_id = :set_lid, last_message_at = NOW(), last_message_preview = :preview, unread_count = :unread, contact_push_name = :push, metadata_json = :meta WHERE id = :id AND tenant_id = :tid'
-                : 'UPDATE conversations SET lead_id = :set_lid, last_message_at = NOW(), last_message_preview = :preview, unread_count = :unread, metadata_json = :meta WHERE id = :id AND tenant_id = :tid';
+                ? 'UPDATE conversations SET lead_id = :set_lid, whatsapp_lid_jid = :set_lid_jid, last_message_at = NOW(), last_message_preview = :preview, unread_count = :unread, contact_push_name = :push, metadata_json = :meta WHERE id = :id AND tenant_id = :tid'
+                : 'UPDATE conversations SET lead_id = :set_lid, whatsapp_lid_jid = :set_lid_jid, last_message_at = NOW(), last_message_preview = :preview, unread_count = :unread, metadata_json = :meta WHERE id = :id AND tenant_id = :tid';
             $paramsPush = [
                 ':id' => $convId,
                 ':tid' => $tenantId,
                 ':set_lid' => $leadIdForUpdate,
+                ':set_lid_jid' => $lidForUpdate,
                 ':preview' => mb_substr($text ?: '[' . $type . ']', 0, 200),
                 ':unread' => $unread,
                 ':meta' => json_encode($mergedMeta, JSON_UNESCAPED_UNICODE),
@@ -533,14 +685,12 @@ class WebhookProcessor
             $filename = isset($dm['fileName']) ? (string) $dm['fileName'] : null;
         }
 
-        $isLidKey = str_starts_with($normalized, 'lid:');
+        $lidJid = ($remoteFull !== '' && str_ends_with($remoteFull, '@lid')) ? $remoteFull : null;
         $lead = null;
-        if ($isLidKey && $remoteFull !== '' && !$resolved['is_group']) {
+        if ($lidJid !== null && !$resolved['is_group']) {
             $lead = Database::fetch(
-                'SELECT id FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL
-                 AND BINARY JSON_UNQUOTE(JSON_EXTRACT(metadata_json, \'$.whatsapp_jid\')) = BINARY :jid
-                 LIMIT 1',
-                [':tid' => $tenantId, ':jid' => $remoteFull]
+                'SELECT id FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL AND whatsapp_lid_jid = :jid LIMIT 1',
+                [':tid' => $tenantId, ':jid' => $lidJid]
             );
         }
         if (!$lead) {
@@ -551,12 +701,16 @@ class WebhookProcessor
         }
         $leadId = $lead ? (int) $lead['id'] : null;
 
+        if ($leadId !== null && $lidJid !== null) {
+            $this->persistLeadWhatsappJid($tenantId, $leadId, $lidJid);
+        }
+
         $conv = $this->findConversationForPeer(
             $tenantId,
             $whatsappInstanceId,
             $normalized,
             $leadId,
-            $remoteFull,
+            $lidJid,
             (bool) $resolved['is_group']
         );
         if ($conv && isset($conv['lead_id']) && (int) $conv['lead_id'] > 0 && $leadId === null) {
@@ -564,36 +718,34 @@ class WebhookProcessor
         }
         if (!$conv && $leadId !== null && $leadId > 0) {
             $conv = Database::fetch(
-                'SELECT id, metadata_json, lead_id, contact_phone FROM conversations WHERE tenant_id = :tid AND whatsapp_instance_id = :wid AND lead_id = :lid LIMIT 1',
+                'SELECT id, metadata_json, lead_id, contact_phone, whatsapp_lid_jid FROM conversations WHERE tenant_id = :tid AND whatsapp_instance_id = :wid AND lead_id = :lid LIMIT 1',
                 [':tid' => $tenantId, ':wid' => $whatsappInstanceId, ':lid' => $leadId]
             );
         }
 
         if (!$conv) {
-            Database::query(
-                'INSERT INTO conversations (tenant_id, lead_id, whatsapp_instance_id, contact_phone, status, last_message_at, last_message_preview, unread_count, metadata_json)
-                 VALUES (:tid, :lid, :wid, :phone, \'open\', NOW(), :preview, 0, :meta)',
-                [
-                    ':tid' => $tenantId,
-                    ':lid' => $leadId,
-                    ':wid' => $whatsappInstanceId,
-                    ':phone' => $normalized,
-                    ':preview' => mb_substr($text ?: '[' . $type . ']', 0, 200),
-                    ':meta' => $waMetaJson,
-                ]
-            );
-            $convId = (int) Database::getInstance()->lastInsertId();
+            $convId = $this->insertConversationSafe($tenantId, $whatsappInstanceId, [
+                'lead_id' => $leadId,
+                'contact_phone' => $normalized,
+                'whatsapp_lid_jid' => $lidJid,
+                'last_message_preview' => mb_substr($text ?: '[' . $type . ']', 0, 200),
+                'unread_count' => 0,
+                'metadata_json' => $waMetaJson,
+            ]);
         } else {
             $convId = (int) $conv['id'];
             $mergedMeta = $this->mergeConversationMetadata($conv['metadata_json'] ?? null, $resolved['wa_meta']);
             $existingLeadId = isset($conv['lead_id']) && (int) $conv['lead_id'] > 0 ? (int) $conv['lead_id'] : null;
             $leadIdForUpdate = $existingLeadId ?? $leadId;
+            $existingLid = isset($conv['whatsapp_lid_jid']) ? (string) $conv['whatsapp_lid_jid'] : '';
+            $lidForUpdate = $existingLid !== '' ? $existingLid : $lidJid;
             Database::query(
-                'UPDATE conversations SET lead_id = :set_lid, last_message_at = NOW(), last_message_preview = :preview, metadata_json = :meta WHERE id = :id AND tenant_id = :tid',
+                'UPDATE conversations SET lead_id = :set_lid, whatsapp_lid_jid = :set_lid_jid, last_message_at = NOW(), last_message_preview = :preview, metadata_json = :meta WHERE id = :id AND tenant_id = :tid',
                 [
                     ':id' => $convId,
                     ':tid' => $tenantId,
                     ':set_lid' => $leadIdForUpdate,
+                    ':set_lid_jid' => $lidForUpdate,
                     ':preview' => mb_substr($text ?: '[' . $type . ']', 0, 200),
                     ':meta' => json_encode($mergedMeta, JSON_UNESCAPED_UNICODE),
                 ]
@@ -824,11 +976,27 @@ class WebhookProcessor
         int $whatsappInstanceId,
         string $contactPhone,
         ?int $leadId,
-        string $remoteJidFull,
+        ?string $lidJid,
         bool $isGroup
     ): ?array {
+        if (!$isGroup && $lidJid !== null && $lidJid !== '') {
+            $conv = Database::fetch(
+                'SELECT id, unread_count, metadata_json, lead_id, contact_phone, whatsapp_lid_jid
+                 FROM conversations
+                 WHERE tenant_id = :tid AND whatsapp_instance_id = :wid AND whatsapp_lid_jid = :jid
+                 LIMIT 1',
+                [':tid' => $tenantId, ':wid' => $whatsappInstanceId, ':jid' => $lidJid]
+            );
+            if ($conv) {
+                return $conv;
+            }
+        }
+
         $conv = Database::fetch(
-            'SELECT id, unread_count, metadata_json, lead_id, contact_phone FROM conversations WHERE tenant_id = :tid AND whatsapp_instance_id = :wid AND contact_phone = :phone LIMIT 1',
+            'SELECT id, unread_count, metadata_json, lead_id, contact_phone, whatsapp_lid_jid
+             FROM conversations
+             WHERE tenant_id = :tid AND whatsapp_instance_id = :wid AND contact_phone = :phone
+             LIMIT 1',
             [':tid' => $tenantId, ':wid' => $whatsappInstanceId, ':phone' => $contactPhone]
         );
         if ($conv) {
@@ -837,7 +1005,10 @@ class WebhookProcessor
 
         if (!$isGroup && $leadId !== null && $leadId > 0) {
             $conv = Database::fetch(
-                'SELECT id, unread_count, metadata_json, lead_id, contact_phone FROM conversations WHERE tenant_id = :tid AND whatsapp_instance_id = :wid AND lead_id = :lid LIMIT 1',
+                'SELECT id, unread_count, metadata_json, lead_id, contact_phone, whatsapp_lid_jid
+                 FROM conversations
+                 WHERE tenant_id = :tid AND whatsapp_instance_id = :wid AND lead_id = :lid
+                 LIMIT 1',
                 [':tid' => $tenantId, ':wid' => $whatsappInstanceId, ':lid' => $leadId]
             );
             if ($conv) {
@@ -845,17 +1016,78 @@ class WebhookProcessor
             }
         }
 
-        if (!$isGroup && $remoteJidFull !== '') {
+        if (!$isGroup && $lidJid !== null && $lidJid !== '') {
             $conv = Database::fetch(
-                'SELECT id, unread_count, metadata_json, lead_id, contact_phone FROM conversations
+                'SELECT id, unread_count, metadata_json, lead_id, contact_phone, whatsapp_lid_jid
+                 FROM conversations
                  WHERE tenant_id = :tid AND whatsapp_instance_id = :wid
-                 AND BINARY JSON_UNQUOTE(JSON_EXTRACT(metadata_json, \'$.wa_remote_jid\')) = BINARY :jid
+                   AND BINARY JSON_UNQUOTE(JSON_EXTRACT(metadata_json, \'$.wa_remote_jid\')) = BINARY :jid
                  LIMIT 1',
-                [':tid' => $tenantId, ':wid' => $whatsappInstanceId, ':jid' => $remoteJidFull]
+                [':tid' => $tenantId, ':wid' => $whatsappInstanceId, ':jid' => $lidJid]
             );
+            if ($conv) {
+                return $conv;
+            }
         }
 
-        return $conv ?: null;
+        return null;
+    }
+
+    /**
+     * Insert conversations cobrindo deduplicacao forte por (tenant, instancia, whatsapp_lid_jid).
+     * Se ja existir conversa com o mesmo LID, atualiza e retorna o id existente.
+     *
+     * @param array<string, mixed> $data
+     */
+    private function insertConversationSafe(int $tenantId, int $whatsappInstanceId, array $data): int
+    {
+        $lidJid = isset($data['whatsapp_lid_jid']) && $data['whatsapp_lid_jid'] !== '' ? (string) $data['whatsapp_lid_jid'] : null;
+
+        try {
+            Database::query(
+                'INSERT INTO conversations
+                    (tenant_id, lead_id, whatsapp_instance_id, contact_phone, contact_push_name, whatsapp_lid_jid, status, last_message_at, last_message_preview, unread_count, metadata_json)
+                 VALUES
+                    (:tid, :lid, :wid, :phone, :push, :lid_jid, \'open\', NOW(), :preview, :unread, :meta)',
+                [
+                    ':tid' => $tenantId,
+                    ':lid' => $data['lead_id'] ?? null,
+                    ':wid' => $whatsappInstanceId,
+                    ':phone' => $data['contact_phone'] ?? null,
+                    ':push' => $data['contact_push_name'] ?? null,
+                    ':lid_jid' => $lidJid,
+                    ':preview' => $data['last_message_preview'] ?? null,
+                    ':unread' => (int) ($data['unread_count'] ?? 0),
+                    ':meta' => $data['metadata_json'] ?? null,
+                ]
+            );
+
+            return (int) Database::getInstance()->lastInsertId();
+        } catch (\PDOException $e) {
+            $state = (string) ($e->errorInfo[0] ?? '');
+            $dupByLid = $lidJid !== null && ($state === '23000' || str_contains($e->getMessage(), 'Duplicate'));
+            if ($dupByLid) {
+                $existing = Database::fetch(
+                    'SELECT id FROM conversations WHERE tenant_id = :tid AND whatsapp_instance_id = :wid AND whatsapp_lid_jid = :jid LIMIT 1',
+                    [':tid' => $tenantId, ':wid' => $whatsappInstanceId, ':jid' => $lidJid]
+                );
+                if ($existing) {
+                    $cid = (int) $existing['id'];
+                    Database::query(
+                        'UPDATE conversations SET lead_id = COALESCE(lead_id, :lid), last_message_at = NOW(), last_message_preview = :preview WHERE id = :id AND tenant_id = :tid',
+                        [
+                            ':lid' => $data['lead_id'] ?? null,
+                            ':preview' => $data['last_message_preview'] ?? null,
+                            ':id' => $cid,
+                            ':tid' => $tenantId,
+                        ]
+                    );
+
+                    return $cid;
+                }
+            }
+            throw $e;
+        }
     }
 
     /**
@@ -919,10 +1151,11 @@ class WebhookProcessor
         }
         $metaJson = $meta !== [] ? json_encode($meta, JSON_UNESCAPED_UNICODE) : null;
         $pending = $lidOnly ? 1 : 0;
+        $lidCol = ($whatsappJid !== null && str_ends_with($whatsappJid, '@lid')) ? $whatsappJid : null;
 
         Database::query(
-            'INSERT INTO leads (tenant_id, pipeline_id, stage_id, name, phone, phone_normalized, source, status, score, temperature, metadata_json, pending_identity_resolution)
-             VALUES (:tid, :pid, :sid, :name, :phone, :pn, \'whatsapp\', \'active\', 0, \'warm\', :meta, :pending)',
+            'INSERT INTO leads (tenant_id, pipeline_id, stage_id, name, phone, phone_normalized, whatsapp_lid_jid, source, status, score, temperature, metadata_json, pending_identity_resolution)
+             VALUES (:tid, :pid, :sid, :name, :phone, :pn, :lidj, \'whatsapp\', \'active\', 0, \'warm\', :meta, :pending)',
             [
                 ':tid' => $tenantId,
                 ':pid' => $pipelineId,
@@ -930,6 +1163,7 @@ class WebhookProcessor
                 ':name' => $name,
                 ':phone' => $phoneVal,
                 ':pn' => $pnVal,
+                ':lidj' => $lidCol,
                 ':meta' => $metaJson,
                 ':pending' => $pending,
             ]
@@ -948,7 +1182,7 @@ class WebhookProcessor
         }
 
         $row = Database::fetch(
-            'SELECT metadata_json FROM leads WHERE id = :id AND tenant_id = :tid LIMIT 1',
+            'SELECT metadata_json, whatsapp_lid_jid FROM leads WHERE id = :id AND tenant_id = :tid LIMIT 1',
             [':id' => $leadId, ':tid' => $tenantId]
         );
         if (!$row) {
@@ -960,14 +1194,26 @@ class WebhookProcessor
         if ($metaRaw !== null && $metaRaw !== '') {
             $meta = is_string($metaRaw) ? (json_decode($metaRaw, true) ?: []) : (is_array($metaRaw) ? $metaRaw : []);
         }
-        if (($meta['whatsapp_jid'] ?? '') === $whatsappJid) {
+        $needsMeta = (($meta['whatsapp_jid'] ?? '') !== $whatsappJid);
+        $needsLidCol = str_ends_with($whatsappJid, '@lid')
+            && (string) ($row['whatsapp_lid_jid'] ?? '') !== $whatsappJid;
+
+        if (!$needsMeta && !$needsLidCol) {
             return;
         }
-        $meta['whatsapp_jid'] = $whatsappJid;
+
+        $update = [];
+        if ($needsMeta) {
+            $meta['whatsapp_jid'] = $whatsappJid;
+            $update['metadata_json'] = json_encode($meta, JSON_UNESCAPED_UNICODE);
+        }
+        if ($needsLidCol) {
+            $update['whatsapp_lid_jid'] = $whatsappJid;
+        }
 
         Database::update(
             'leads',
-            ['metadata_json' => json_encode($meta, JSON_UNESCAPED_UNICODE)],
+            $update,
             'id = :id AND tenant_id = :tid',
             [':id' => $leadId, ':tid' => $tenantId]
         );

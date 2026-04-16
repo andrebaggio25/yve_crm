@@ -232,15 +232,21 @@ const Kanban = {
         if (m) {
             m.classList.remove('hidden');
             m.classList.add('flex');
+            m.setAttribute('aria-hidden', 'false');
         }
-        inp?.focus();
+        requestAnimationFrame(() => inp?.focus());
     },
 
     closeEntryLinkModal() {
         this._entryLinkProvisionalId = null;
         const m = document.getElementById('entry-link-modal');
-        m?.classList.add('hidden');
-        m?.classList.remove('flex');
+        if (!m) return;
+        if (m.contains(document.activeElement) && typeof document.activeElement.blur === 'function') {
+            document.activeElement.blur();
+        }
+        m.setAttribute('aria-hidden', 'true');
+        m.classList.add('hidden');
+        m.classList.remove('flex');
     },
 
     async runEntryLinkSearch() {
@@ -318,15 +324,21 @@ const Kanban = {
         if (m) {
             m.classList.remove('hidden');
             m.classList.add('flex');
+            m.setAttribute('aria-hidden', 'false');
         }
-        phoneEl?.focus();
+        requestAnimationFrame(() => phoneEl?.focus());
     },
 
     closeEntryAcceptModal() {
         this._entryAcceptProvisionalId = null;
         const m = document.getElementById('entry-accept-modal');
-        m?.classList.add('hidden');
-        m?.classList.remove('flex');
+        if (!m) return;
+        if (m.contains(document.activeElement) && typeof document.activeElement.blur === 'function') {
+            document.activeElement.blur();
+        }
+        m.setAttribute('aria-hidden', 'true');
+        m.classList.add('hidden');
+        m.classList.remove('flex');
     },
 
     async submitEntryAccept() {

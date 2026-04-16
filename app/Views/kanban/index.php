@@ -56,10 +56,10 @@ $pageTitle = 'Leads / Kanban';
     </div>
 </div>
 
-<div class="fixed inset-0 z-[420] hidden items-center justify-center bg-black/50 p-4" id="entry-link-modal" aria-hidden="true">
+<div class="fixed inset-0 z-[420] hidden items-center justify-center bg-black/50 p-4" id="entry-link-modal" role="dialog" aria-modal="true" aria-labelledby="entry-link-modal-title" aria-hidden="true">
     <div class="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl bg-white p-6 shadow-xl" onclick="event.stopPropagation()" role="document">
         <div class="mb-4 flex items-center justify-between">
-            <h3 class="text-lg font-semibold text-slate-900">Vincular a lead existente</h3>
+            <h3 class="text-lg font-semibold text-slate-900" id="entry-link-modal-title">Vincular a lead existente</h3>
             <button type="button" class="rounded-lg p-2 text-slate-500 hover:bg-slate-100" data-entry-link-close>&times;</button>
         </div>
         <p class="mb-3 text-sm text-slate-600">Busque por nome ou telefone e selecione o lead correto.</p>
@@ -74,10 +74,10 @@ $pageTitle = 'Leads / Kanban';
     </div>
 </div>
 
-<div class="fixed inset-0 z-[420] hidden items-center justify-center bg-black/50 p-4" id="entry-accept-modal" aria-hidden="true">
+<div class="fixed inset-0 z-[420] hidden items-center justify-center bg-black/50 p-4" id="entry-accept-modal" role="dialog" aria-modal="true" aria-labelledby="entry-accept-modal-title" aria-hidden="true">
     <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl" onclick="event.stopPropagation()" role="document">
         <div class="mb-4 flex items-center justify-between">
-            <h3 class="text-lg font-semibold text-slate-900">Aceitar no pipeline</h3>
+            <h3 class="text-lg font-semibold text-slate-900" id="entry-accept-modal-title">Aceitar no pipeline</h3>
             <button type="button" class="rounded-lg p-2 text-slate-500 hover:bg-slate-100" data-entry-accept-close>&times;</button>
         </div>
         <form id="entry-accept-form" class="space-y-3">

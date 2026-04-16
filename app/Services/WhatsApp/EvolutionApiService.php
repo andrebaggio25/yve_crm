@@ -208,6 +208,8 @@ class EvolutionApiService
 
         // Payload conforme documentacao Evolution API v2
         // https://docs.evoapicloud.com/instances/events/webhook
+        // CONTACTS_* e CHATS_* dao o par (jid, lid, profilePicUrl, pushName)
+        // silenciosamente quando o Baileys sincroniza o contato/chat.
         $data = [
             'webhook' => [
                 'enabled' => true,
@@ -221,6 +223,10 @@ class EvolutionApiService
                     'CONNECTION_UPDATE',
                     'QRCODE_UPDATED',
                     'PRESENCE_UPDATE',
+                    'CONTACTS_UPSERT',
+                    'CONTACTS_UPDATE',
+                    'CHATS_UPSERT',
+                    'CHATS_UPDATE',
                 ],
             ],
         ];
@@ -231,6 +237,76 @@ class EvolutionApiService
         }
 
         return $this->request('POST', $url, $apiKey, $payload);
+    }
+
+    /**
+     * Busca a URL da foto de perfil de um contato (silencioso, sem mandar mensagem).
+     * Requer um JID (@s.whatsapp.net ou @lid) ou um numero (digits).
+     *
+     * @return array{ok:bool,http:int,body:mixed,raw:string}
+     */
+    public function fetchProfilePicture(string $baseUrl, string $apiKey, string $instanceName, string $numberOrJid): array
+    {
+        $baseUrl = rtrim($baseUrl, '/');
+        $url = $baseUrl . '/chat/fetchProfilePictureUrl/' . rawurlencode($instanceName);
+        $payload = json_encode(['number' => $numberOrJid], JSON_UNESCAPED_UNICODE);
+
+        return $this->request('POST', $url, $apiKey, $payload);
+    }
+
+    /**
+     * Extrai URL valida da resposta da Evolution (v2 costuma retornar
+     * `{"profilePictureUrl":"..."}`, algumas versoes `{"url":"..."}`).
+     *
+     * @param mixed $body corpo ja decodificado
+     */
+    public static function extractProfilePictureUrl(mixed $body): string
+    {
+        if (!is_array($body)) {
+            return '';
+        }
+        foreach (['profilePictureUrl', 'profilePicUrl', 'url', 'pictureUrl'] as $key) {
+            $val = isset($body[$key]) ? (string) $body[$key] : '';
+            if ($val !== '' && preg_match('#^https?://#i', $val) === 1) {
+                return $val;
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * Extrai o campo `lid` de uma resposta do whatsappNumbers / findContacts.
+     * A Evolution v2 pode devolver `lid` ao lado de `jid` quando o contato
+     * tem identidade vinculada (WA-LID).
+     *
+     * @param mixed $body corpo ja decodificado (array ou lista)
+     */
+    public static function extractLidFromResponse(mixed $body): string
+    {
+        if (!is_array($body)) {
+            return '';
+        }
+        $list = isset($body[0]) ? $body : [$body];
+        foreach ($list as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            foreach (['lid', 'lidJid', 'linkedId'] as $field) {
+                $val = isset($item[$field]) ? (string) $item[$field] : '';
+                if ($val !== '' && str_ends_with($val, '@lid')) {
+                    return $val;
+                }
+            }
+            foreach (['jid', 'id', 'remoteJid'] as $field) {
+                $val = isset($item[$field]) ? (string) $item[$field] : '';
+                if ($val !== '' && str_ends_with($val, '@lid')) {
+                    return $val;
+                }
+            }
+        }
+
+        return '';
     }
 
     /**

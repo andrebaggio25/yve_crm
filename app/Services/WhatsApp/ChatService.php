@@ -240,6 +240,19 @@ class ChatService
                     $this->mergeWhatsappJidIntoLead($leadIdForJid, $sentJid);
                 }
             }
+
+            // Enriquecimento silencioso: captura LID e foto de perfil
+            // sem depender do inbound. Nao bloqueia caso falhe.
+            try {
+                $this->enrichConversationIdentity(
+                    (int) $conversationId,
+                    (array) $conv,
+                    $numberForEvolution,
+                    is_array($body) ? $body : null
+                );
+            } catch (\Throwable $e) {
+                App::log('[Chat] enrichConversationIdentity falhou: ' . $e->getMessage());
+            }
         } else {
             TenantAwareDatabase::update(
                 'messages',
@@ -358,6 +371,38 @@ class ChatService
 
     public function findOrCreateConversationForLead(int $leadId, int $whatsappInstanceId, string $contactPhone, string $contactName = ''): ?int
     {
+        // LID explicito do lead para deduplicacao forte por tenant+instancia+LID.
+        $leadRow = TenantAwareDatabase::fetch(
+            'SELECT whatsapp_lid_jid FROM leads WHERE id = :id AND tenant_id = :tenant_id LIMIT 1',
+            TenantAwareDatabase::mergeTenantParams([':id' => $leadId])
+        );
+        $leadLidJid = $leadRow && !empty($leadRow['whatsapp_lid_jid']) ? (string) $leadRow['whatsapp_lid_jid'] : null;
+
+        if ($leadLidJid !== null) {
+            $byLid = TenantAwareDatabase::fetch(
+                'SELECT id FROM conversations WHERE tenant_id = :tenant_id AND whatsapp_instance_id = :wid AND whatsapp_lid_jid = :jid LIMIT 1',
+                TenantAwareDatabase::mergeTenantParams([
+                    ':wid' => $whatsappInstanceId,
+                    ':jid' => $leadLidJid,
+                ])
+            );
+            if ($byLid) {
+                $cid = (int) $byLid['id'];
+                $upd = ['contact_phone' => $contactPhone, 'lead_id' => $leadId];
+                if ($contactName !== '') {
+                    $upd['contact_name'] = $contactName;
+                }
+                TenantAwareDatabase::update(
+                    'conversations',
+                    $upd,
+                    'id = :id',
+                    [':id' => $cid]
+                );
+
+                return $cid;
+            }
+        }
+
         $byLead = TenantAwareDatabase::fetch(
             'SELECT id FROM conversations WHERE tenant_id = :tenant_id AND whatsapp_instance_id = :wid AND lead_id = :lid ORDER BY id DESC LIMIT 1',
             TenantAwareDatabase::mergeTenantParams([
@@ -426,19 +471,32 @@ class ChatService
                 'whatsapp_instance_id' => $whatsappInstanceId,
                 'contact_phone' => $contactPhone,
                 'contact_name' => $contactName !== '' ? $contactName : null,
+                'whatsapp_lid_jid' => $leadLidJid,
                 'status' => 'open',
                 'unread_count' => 0,
             ]);
         } catch (\PDOException $e) {
             $state = (string) ($e->errorInfo[0] ?? '');
             if ($state === '23000' || str_contains($e->getMessage(), 'Duplicate')) {
-                $dup = TenantAwareDatabase::fetch(
-                    'SELECT id, lead_id FROM conversations WHERE tenant_id = :tenant_id AND whatsapp_instance_id = :wid AND contact_phone = :cp ORDER BY id DESC LIMIT 1',
-                    TenantAwareDatabase::mergeTenantParams([
-                        ':wid' => $whatsappInstanceId,
-                        ':cp' => $contactPhone,
-                    ])
-                );
+                $dup = null;
+                if ($leadLidJid !== null) {
+                    $dup = TenantAwareDatabase::fetch(
+                        'SELECT id, lead_id FROM conversations WHERE tenant_id = :tenant_id AND whatsapp_instance_id = :wid AND whatsapp_lid_jid = :jid ORDER BY id DESC LIMIT 1',
+                        TenantAwareDatabase::mergeTenantParams([
+                            ':wid' => $whatsappInstanceId,
+                            ':jid' => $leadLidJid,
+                        ])
+                    );
+                }
+                if (!$dup) {
+                    $dup = TenantAwareDatabase::fetch(
+                        'SELECT id, lead_id FROM conversations WHERE tenant_id = :tenant_id AND whatsapp_instance_id = :wid AND contact_phone = :cp ORDER BY id DESC LIMIT 1',
+                        TenantAwareDatabase::mergeTenantParams([
+                            ':wid' => $whatsappInstanceId,
+                            ':cp' => $contactPhone,
+                        ])
+                    );
+                }
                 if ($dup) {
                     $cid = (int) $dup['id'];
                     if ($contactName !== '' && $contactName !== null) {
@@ -505,9 +563,14 @@ class ChatService
         }
         $meta['whatsapp_jid'] = $whatsappJid;
 
+        $update = ['metadata_json' => json_encode($meta, JSON_UNESCAPED_UNICODE)];
+        if (str_ends_with($whatsappJid, '@lid')) {
+            $update['whatsapp_lid_jid'] = $whatsappJid;
+        }
+
         TenantAwareDatabase::update(
             'leads',
-            ['metadata_json' => json_encode($meta, JSON_UNESCAPED_UNICODE)],
+            $update,
             'id = :id',
             [':id' => $leadId]
         );
@@ -521,6 +584,96 @@ class ChatService
         if ($pn !== '' && $whatsappJid !== '') {
             $phoneJid = str_contains($whatsappJid, '@s.whatsapp.net') ? $whatsappJid : null;
             LidResolverService::storeMapping((int) $tenantId, $whatsappJid, $pn, $phoneJid, 'send_response');
+        }
+    }
+
+    /**
+     * Apos sendText bem-sucedido, tenta capturar silenciosamente:
+     *  - LID associado ao telefone (se ainda desconhecido) via findContacts pelo JID retornado.
+     *  - Foto de perfil via /chat/fetchProfilePictureUrl, cacheada em conversations.contact_avatar_url.
+     *
+     * Idempotente: so consulta quando dados estao faltando/vencidos (>7 dias).
+     *
+     * @param array<string, mixed>      $conv
+     * @param array<string, mixed>|null $sendResponseBody
+     */
+    private function enrichConversationIdentity(int $conversationId, array $conv, string $recipient, ?array $sendResponseBody): void
+    {
+        $apiUrl = (string) ($conv['api_url'] ?? '');
+        $apiKey = (string) ($conv['api_key'] ?? '');
+        $instanceName = (string) ($conv['instance_name'] ?? '');
+        if ($apiUrl === '' || $apiKey === '' || $instanceName === '') {
+            return;
+        }
+
+        $evo = new EvolutionApiService();
+
+        // JID que a Evolution confirmou no envio — fonte de verdade para findContacts.
+        $sentJid = '';
+        if (is_array($sendResponseBody) && isset($sendResponseBody['key']['remoteJid'])) {
+            $sentJid = (string) $sendResponseBody['key']['remoteJid'];
+        }
+        if ($sentJid === '' && str_contains($recipient, '@')) {
+            $sentJid = $recipient;
+        }
+
+        $leadId = (int) ($conv['lead_id'] ?? 0);
+        $tenantId = (int) TenantContext::getEffectiveTenantId();
+        $phoneNormalized = (string) ($conv['contact_phone'] ?? '');
+
+        // 1) Captura LID via findContacts apenas quando ainda nao temos.
+        $hasLid = !empty($conv['whatsapp_lid_jid']);
+        if (!$hasLid && $leadId > 0) {
+            $leadRow = TenantAwareDatabase::fetch(
+                'SELECT whatsapp_lid_jid FROM leads WHERE id = :id AND tenant_id = :tenant_id LIMIT 1',
+                TenantAwareDatabase::mergeTenantParams([':id' => $leadId])
+            );
+            $hasLid = $leadRow && !empty($leadRow['whatsapp_lid_jid']);
+        }
+
+        if (!$hasLid && $sentJid !== '' && !str_ends_with($sentJid, '@lid') && !str_ends_with($sentJid, '@g.us')) {
+            $lookup = $evo->fetchContactByJid($apiUrl, $apiKey, $instanceName, $sentJid);
+            $discoveredLid = EvolutionApiService::extractLidFromResponse($lookup['body'] ?? null);
+
+            if ($discoveredLid !== '') {
+                $phoneJid = (str_contains($sentJid, '@s.whatsapp.net') || str_contains($sentJid, '@c.us')) ? $sentJid : null;
+                LidResolverService::storeMapping(
+                    $tenantId,
+                    $discoveredLid,
+                    $phoneNormalized !== '' ? $phoneNormalized : ($phoneJid ? (preg_replace('/\D/', '', explode('@', $phoneJid)[0] ?? '') ?: '') : ''),
+                    $phoneJid,
+                    'send_findcontacts'
+                );
+                if ($leadId > 0) {
+                    $this->mergeWhatsappJidIntoLead($leadId, $discoveredLid);
+                }
+                TenantAwareDatabase::query(
+                    'UPDATE conversations SET whatsapp_lid_jid = :jid WHERE id = :id AND tenant_id = :tenant_id AND (whatsapp_lid_jid IS NULL OR whatsapp_lid_jid = \'\')',
+                    TenantAwareDatabase::mergeTenantParams([':jid' => $discoveredLid, ':id' => $conversationId])
+                );
+            }
+        }
+
+        // 2) Foto de perfil: busca quando nao temos cache ou cache com mais de 7 dias.
+        $needsAvatar = true;
+        if (!empty($conv['contact_avatar_url'])) {
+            $ts = strtotime((string) ($conv['contact_avatar_updated_at'] ?? '')) ?: 0;
+            if ($ts > 0 && (time() - $ts) < 7 * 24 * 3600) {
+                $needsAvatar = false;
+            }
+        }
+
+        if ($needsAvatar && $sentJid !== '' && !str_ends_with($sentJid, '@g.us')) {
+            $picRes = $evo->fetchProfilePicture($apiUrl, $apiKey, $instanceName, $sentJid);
+            $pic = EvolutionApiService::extractProfilePictureUrl($picRes['body'] ?? null);
+            if ($pic !== '') {
+                TenantAwareDatabase::query(
+                    'UPDATE conversations
+                     SET contact_avatar_url = :pic, contact_avatar_updated_at = NOW()
+                     WHERE id = :id AND tenant_id = :tenant_id',
+                    TenantAwareDatabase::mergeTenantParams([':pic' => $pic, ':id' => $conversationId])
+                );
+            }
         }
     }
 

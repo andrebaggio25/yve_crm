@@ -181,23 +181,33 @@ class LidResolverService
         $exists = !empty($row['exists']);
         $jid = isset($row['jid']) ? (string) $row['jid'] : '';
         $num = isset($row['number']) ? (string) $row['number'] : $digits;
+        $explicitLid = '';
+        foreach (['lid', 'lidJid', 'linkedId'] as $field) {
+            $candidate = isset($row[$field]) ? (string) $row[$field] : '';
+            if ($candidate !== '' && str_ends_with($candidate, '@lid')) {
+                $explicitLid = $candidate;
+                break;
+            }
+        }
 
         if (!$exists || $jid === '') {
             return ['exists' => false, 'lid_jid' => null, 'phone_jid' => null, 'number' => $digits];
         }
 
         $norm = PhoneHelper::normalize($num) ?: $digits;
-        $lidJid = str_ends_with($jid, '@lid') ? $jid : $jid;
-        $phoneJid = str_ends_with($jid, '@s.whatsapp.net') || str_ends_with($jid, '@c.us') ? $jid : null;
+        $phoneJid = (str_ends_with($jid, '@s.whatsapp.net') || str_ends_with($jid, '@c.us')) ? $jid : null;
+        $lidOnly = str_ends_with($jid, '@lid') ? $jid : ($explicitLid !== '' ? $explicitLid : null);
 
+        // Grava mapping tanto pelo JID primario quanto pelo LID explicito (se distintos).
         self::storeMapping($tenantId, $jid, $norm, $phoneJid ?? $jid, 'whatsapp_numbers');
-
-        $lidOnly = str_ends_with($jid, '@lid') ? $jid : null;
+        if ($lidOnly !== null && $lidOnly !== $jid) {
+            self::storeMapping($tenantId, $lidOnly, $norm, $phoneJid, 'whatsapp_numbers');
+        }
 
         return [
             'exists' => true,
             'lid_jid' => $lidOnly,
-            'phone_jid' => $jid,
+            'phone_jid' => $phoneJid ?? (str_ends_with($jid, '@lid') ? null : $jid),
             'number' => $norm,
         ];
     }
@@ -264,18 +274,26 @@ class LidResolverService
                     continue;
                 }
                 $exists = !empty($row['exists']) && $jid !== '';
+                $explicitLid = '';
+                foreach (['lid', 'lidJid', 'linkedId'] as $field) {
+                    $candidate = isset($row[$field]) ? (string) $row[$field] : '';
+                    if ($candidate !== '' && str_ends_with($candidate, '@lid')) {
+                        $explicitLid = $candidate;
+                        break;
+                    }
+                }
+                $phoneJid = (str_ends_with($jid, '@s.whatsapp.net') || str_ends_with($jid, '@c.us')) ? $jid : null;
+                $lidJid = str_ends_with($jid, '@lid') ? $jid : ($explicitLid !== '' ? $explicitLid : null);
+
                 if ($exists) {
-                    self::storeMapping(
-                        $tenantId,
-                        $jid,
-                        $norm,
-                        str_ends_with($jid, '@s.whatsapp.net') ? $jid : null,
-                        'whatsapp_numbers'
-                    );
+                    self::storeMapping($tenantId, $jid, $norm, $phoneJid, 'whatsapp_numbers');
+                    if ($lidJid !== null && $lidJid !== $jid) {
+                        self::storeMapping($tenantId, $lidJid, $norm, $phoneJid, 'whatsapp_numbers');
+                    }
                 }
                 $out[$norm] = [
                     'ok' => true,
-                    'lid_jid' => str_ends_with($jid, '@lid') ? $jid : null,
+                    'lid_jid' => $lidJid,
                     'exists' => $exists,
                 ];
             }
@@ -301,7 +319,7 @@ class LidResolverService
         $prov = Database::fetch(
             'SELECT id FROM leads WHERE tenant_id = :tid AND deleted_at IS NULL
              AND (pending_identity_resolution = 1 OR phone_normalized LIKE \'lid:%\')
-             AND BINARY JSON_UNQUOTE(JSON_EXTRACT(metadata_json, \'$.whatsapp_jid\')) = BINARY :jid
+             AND whatsapp_lid_jid = :jid
              LIMIT 1',
             [':tid' => $tenantId, ':jid' => $lidJid]
         );
@@ -443,19 +461,39 @@ class LidResolverService
         if (!empty($provMeta['whatsapp_jid'])) {
             $tgtMeta['whatsapp_jid'] = $provMeta['whatsapp_jid'];
         }
+        $tgtUpdate = [
+            'metadata_json' => json_encode($tgtMeta, JSON_UNESCAPED_UNICODE),
+            'pending_identity_resolution' => 0,
+        ];
+        $provLid = (string) ($prov['whatsapp_lid_jid'] ?? '');
+        $tgtLid = (string) ($tgt['whatsapp_lid_jid'] ?? '');
+        if ($provLid !== '' && $tgtLid === '') {
+            $tgtUpdate['whatsapp_lid_jid'] = $provLid;
+        }
+
         Database::update(
             'leads',
-            ['metadata_json' => json_encode($tgtMeta, JSON_UNESCAPED_UNICODE), 'pending_identity_resolution' => 0],
+            $tgtUpdate,
             'id = :id AND tenant_id = :tid',
             [':id' => $targetLeadId, ':tid' => $tenantId]
         );
 
-        Database::update(
-            'leads',
-            ['deleted_at' => date('Y-m-d H:i:s')],
-            'id = :id AND tenant_id = :tid',
-            [':id' => $provisionalLeadId, ':tid' => $tenantId]
-        );
+        // Libera LID no lead provisorio antes do soft-delete para nao prender valores em leads inativos.
+        if ($provLid !== '') {
+            Database::update(
+                'leads',
+                ['whatsapp_lid_jid' => null, 'deleted_at' => date('Y-m-d H:i:s')],
+                'id = :id AND tenant_id = :tid',
+                [':id' => $provisionalLeadId, ':tid' => $tenantId]
+            );
+        } else {
+            Database::update(
+                'leads',
+                ['deleted_at' => date('Y-m-d H:i:s')],
+                'id = :id AND tenant_id = :tid',
+                [':id' => $provisionalLeadId, ':tid' => $tenantId]
+            );
+        }
 
         Database::insert('lead_events', [
             'lead_id' => $targetLeadId,
@@ -488,20 +526,30 @@ class LidResolverService
                 : [];
         }
 
+        $lidForColumn = null;
         if ($res && !empty($res['exists'])) {
             $meta['whatsapp_status'] = 'ok';
             if (!empty($res['lid_jid'])) {
                 $meta['whatsapp_jid'] = $res['lid_jid'];
+                $lidForColumn = (string) $res['lid_jid'];
             } elseif (!empty($res['phone_jid'])) {
                 $meta['whatsapp_jid'] = $res['phone_jid'];
+                if (str_ends_with((string) $res['phone_jid'], '@lid')) {
+                    $lidForColumn = (string) $res['phone_jid'];
+                }
             }
         } else {
             $meta['whatsapp_status'] = 'not_found';
         }
 
+        $updateData = ['metadata_json' => json_encode($meta, JSON_UNESCAPED_UNICODE)];
+        if ($lidForColumn !== null && $lidForColumn !== '') {
+            $updateData['whatsapp_lid_jid'] = $lidForColumn;
+        }
+
         Database::update(
             'leads',
-            ['metadata_json' => json_encode($meta, JSON_UNESCAPED_UNICODE)],
+            $updateData,
             'id = :id AND tenant_id = :tid',
             [':id' => $leadId, ':tid' => $tenantId]
         );

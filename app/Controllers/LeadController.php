@@ -74,8 +74,17 @@ class LeadController
             }
 
             if ($request->get('search')) {
-                $where[] = '(l.name LIKE :search OR l.email LIKE :search OR l.phone LIKE :search)';
-                $params[':search'] = '%' . $request->get('search') . '%';
+                // Placeholders distintos + COLLATE explicito evitam `Illegal mix of collations`
+                // quando a sessao MySQL difere da tabela (ex.: utf8mb4_general_ci vs _unicode_ci).
+                $where[] = '('
+                    . 'l.name COLLATE utf8mb4_unicode_ci LIKE :s_name'
+                    . ' OR l.email COLLATE utf8mb4_unicode_ci LIKE :s_email'
+                    . ' OR l.phone COLLATE utf8mb4_unicode_ci LIKE :s_phone'
+                    . ')';
+                $needle = '%' . $request->get('search') . '%';
+                $params[':s_name'] = $needle;
+                $params[':s_email'] = $needle;
+                $params[':s_phone'] = $needle;
             }
 
             $whereSql = implode(' AND ', $where);
@@ -106,8 +115,17 @@ class LeadController
                 'limit' => $limit,
                 'offset' => $offset
             ]);
+        } catch (\PDOException $e) {
+            // Loga codigo SQLSTATE + mensagem real para diagnostico (1267 = collation, HY093 = bind).
+            $sqlState = (string) ($e->errorInfo[0] ?? '');
+            $driverCode = (string) ($e->errorInfo[1] ?? '');
+            App::logError(
+                'apiList PDOException sqlstate=' . $sqlState . ' driver=' . $driverCode . ' msg=' . $e->getMessage(),
+                $e
+            );
+            $response->jsonError('Erro ao carregar leads', 500);
         } catch (\Exception $e) {
-            App::logError('Erro ao listar leads', $e);
+            App::logError('Erro ao listar leads: ' . $e->getMessage(), $e);
             $response->jsonError('Erro ao carregar leads', 500);
         }
     }
