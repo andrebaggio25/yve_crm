@@ -396,14 +396,41 @@ class ChatService
             return $cid;
         }
 
-        $newId = TenantAwareDatabase::insert('conversations', [
-            'lead_id' => $leadId,
-            'whatsapp_instance_id' => $whatsappInstanceId,
-            'contact_phone' => $contactPhone,
-            'contact_name' => $contactName !== '' ? $contactName : null,
-            'status' => 'open',
-            'unread_count' => 0,
-        ]);
+        try {
+            $newId = TenantAwareDatabase::insert('conversations', [
+                'lead_id' => $leadId,
+                'whatsapp_instance_id' => $whatsappInstanceId,
+                'contact_phone' => $contactPhone,
+                'contact_name' => $contactName !== '' ? $contactName : null,
+                'status' => 'open',
+                'unread_count' => 0,
+            ]);
+        } catch (\PDOException $e) {
+            $state = (string) ($e->errorInfo[0] ?? '');
+            if ($state === '23000' || str_contains($e->getMessage(), 'Duplicate')) {
+                $dup = TenantAwareDatabase::fetch(
+                    'SELECT id, lead_id FROM conversations WHERE tenant_id = :tenant_id AND whatsapp_instance_id = :wid AND contact_phone = :cp ORDER BY id DESC LIMIT 1',
+                    TenantAwareDatabase::mergeTenantParams([
+                        ':wid' => $whatsappInstanceId,
+                        ':cp' => $contactPhone,
+                    ])
+                );
+                if ($dup) {
+                    $cid = (int) $dup['id'];
+                    TenantAwareDatabase::query(
+                        'UPDATE conversations SET lead_id = :lid, contact_name = COALESCE(NULLIF(:name, \'\'), contact_name) WHERE id = :id AND tenant_id = :tenant_id',
+                        TenantAwareDatabase::mergeTenantParams([
+                            ':id' => $cid,
+                            ':lid' => $leadId,
+                            ':name' => $contactName,
+                        ])
+                    );
+
+                    return $cid;
+                }
+            }
+            throw $e;
+        }
 
         return $newId > 0 ? $newId : null;
     }

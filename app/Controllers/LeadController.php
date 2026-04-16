@@ -690,7 +690,7 @@ class LeadController
         }
 
         $input = $request->getJsonInput() ?? [];
-        $customMessage = isset($input['message']) ? trim((string) $input['message']) : null;
+        $rawMessage = isset($input['message']) ? trim((string) $input['message']) : '';
         $requestedTemplateId = isset($input['template_id']) ? (int) $input['template_id'] : 0;
 
         $template = null;
@@ -702,22 +702,16 @@ class LeadController
             );
         }
 
-        if ($customMessage !== null && $customMessage !== '') {
-            $message = $this->interpolateLeadMessage($customMessage, $lead);
+        $message = null;
+        if ($rawMessage !== '') {
+            $message = $this->interpolateLeadMessage($rawMessage, $lead);
         } elseif ($template) {
-            $message = $this->interpolateLeadMessage($template['content'], $lead);
-        } else {
-            $template = $this->findWhatsAppTemplateForStage(
-                (string) ($lead['stage_type'] ?? 'any'),
-                !empty($lead['pipeline_id']) ? (int) $lead['pipeline_id'] : null,
-                !empty($lead['stage_id']) ? (int) $lead['stage_id'] : null
-            );
-            $message = $template
-                ? $this->interpolateLeadMessage($template['content'], $lead)
-                : null;
+            $message = $this->interpolateLeadMessage((string) ($template['content'] ?? ''), $lead);
+        } elseif ($requestedTemplateId > 0) {
+            $response->jsonError('Template nao encontrado ou inativo', 404);
+            return;
         }
 
-        $user = Session::user();
         $chat = new ChatService();
 
         if ($message === null || $message === '') {
@@ -739,7 +733,8 @@ class LeadController
             return;
         }
 
-        $send = $chat->sendToLead((int) $id, $message, 'user', (int) $user['id']);
+        $user = Session::user();
+        $send = $chat->sendToLead((int) $id, $message, 'user', (int) ($user['id'] ?? 0));
 
         if (!$send['ok']) {
             $response->jsonError($send['message'] ?? 'Falha ao enviar WhatsApp', 422);
