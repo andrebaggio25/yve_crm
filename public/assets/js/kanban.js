@@ -740,7 +740,10 @@ const Kanban = {
         try {
             const res = await API.leads.triggerWhatsApp(leadId, payload);
             if (res.success && res.data?.conversation_id) {
-                App.toast(res.message || 'Mensagem enviada', 'success');
+                const msg = res.data?.inbox_only
+                    ? res.message || 'Abrindo inbox'
+                    : res.message || 'Mensagem enviada';
+                App.toast(msg, 'success');
                 window.location.href = '/inbox#conv-' + encodeURIComponent(String(res.data.conversation_id));
                 return res;
             }
@@ -748,7 +751,7 @@ const Kanban = {
             return res;
         } catch (err) {
             console.error(err);
-            App.toast('Erro ao contactar o servidor', 'error');
+            App.toast(err.message || err.data?.message || 'Erro ao contactar o servidor', 'error');
             return null;
         }
     },

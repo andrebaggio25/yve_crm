@@ -717,14 +717,28 @@ class LeadController
                 : null;
         }
 
+        $user = Session::user();
+        $chat = new ChatService();
+
         if ($message === null || $message === '') {
-            $response->jsonError('Informe uma mensagem ou selecione um template para enviar pelo WhatsApp', 422);
+            $open = $chat->ensureConversationForLead((int) $id);
+            if (!$open['ok']) {
+                $response->jsonError($open['message'] ?? 'Nao foi possivel abrir a conversa no inbox', 422);
+                return;
+            }
+
+            $response->jsonSuccess([
+                'conversation_id' => $open['conversation_id'],
+                'message_id' => null,
+                'message' => null,
+                'inbox_only' => true,
+                'template_id' => null,
+                'template_name' => null,
+            ], 'Abrindo conversa no inbox');
+
             return;
         }
 
-        $user = Session::user();
-
-        $chat = new ChatService();
         $send = $chat->sendToLead((int) $id, $message, 'user', (int) $user['id']);
 
         if (!$send['ok']) {

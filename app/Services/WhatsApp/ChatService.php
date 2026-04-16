@@ -267,17 +267,20 @@ class ChatService
     }
 
     /**
-     * Cria ou retorna conversa do lead para a instancia e envia texto (inbox + Evolution).
+     * Garante conversa WhatsApp para o lead sem enviar mensagem (ex.: botao rapido no Kanban).
      *
-     * @return array{ok:bool,message?:string,conversation_id?:int,message_id?:int}
+     * @return array{ok:bool,message?:string,conversation_id?:int}
      */
-    public function sendToLead(int $leadId, string $text, string $senderType = 'user', ?int $senderId = null): array
+    public function ensureConversationForLead(int $leadId): array
     {
-        $text = trim($text);
-        if ($text === '') {
-            return ['ok' => false, 'message' => 'Mensagem vazia'];
-        }
+        return $this->resolveConversationForLead($leadId);
+    }
 
+    /**
+     * @return array{ok:true,conversation_id:int}|array{ok:false,message:string}
+     */
+    private function resolveConversationForLead(int $leadId): array
+    {
         $lead = TenantAwareDatabase::fetch(
             'SELECT * FROM leads WHERE id = :id AND tenant_id = :tenant_id AND deleted_at IS NULL',
             TenantAwareDatabase::mergeTenantParams([':id' => $leadId])
@@ -326,7 +329,27 @@ class ChatService
             return ['ok' => false, 'message' => 'Nao foi possivel criar conversa'];
         }
 
-        return $this->sendText($convId, $text, $senderType, $senderId);
+        return ['ok' => true, 'conversation_id' => $convId];
+    }
+
+    /**
+     * Cria ou retorna conversa do lead para a instancia e envia texto (inbox + Evolution).
+     *
+     * @return array{ok:bool,message?:string,conversation_id?:int,message_id?:int}
+     */
+    public function sendToLead(int $leadId, string $text, string $senderType = 'user', ?int $senderId = null): array
+    {
+        $text = trim($text);
+        if ($text === '') {
+            return ['ok' => false, 'message' => 'Mensagem vazia'];
+        }
+
+        $ctx = $this->resolveConversationForLead($leadId);
+        if (!$ctx['ok']) {
+            return $ctx;
+        }
+
+        return $this->sendText($ctx['conversation_id'], $text, $senderType, $senderId);
     }
 
     public function findOrCreateConversationForLead(int $leadId, int $whatsappInstanceId, string $contactPhone, string $contactName = ''): ?int
