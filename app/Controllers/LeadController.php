@@ -474,6 +474,7 @@ class LeadController
             return;
         }
 
+        $stageId = (int) $stageId;
         $updateData = ['stage_id' => $stageId];
 
         if ((int) ($lead['pending_identity_resolution'] ?? 0) === 1) {
@@ -504,7 +505,14 @@ class LeadController
             $db = TenantAwareDatabase::getInstance();
             $db->beginTransaction();
 
-            TenantAwareDatabase::update('leads', $updateData, 'id = :id', [':id' => $id]);
+            $rows = TenantAwareDatabase::update('leads', $updateData, 'id = :id', [':id' => $id]);
+            if ($rows < 1) {
+                $db->rollBack();
+                App::logError("apiMoveStage: UPDATE leads afetou 0 linhas (lead {$id}, tenant context)");
+                $response->jsonError('Nao foi possivel atualizar o lead. Verifique permissoes do tenant.', 409);
+
+                return;
+            }
 
             TenantAwareDatabase::insert('lead_events', [
                 'lead_id' => $id,
@@ -529,6 +537,8 @@ class LeadController
                     'pipeline_id' => (int) $lead['pipeline_id'],
                     'from_stage_id' => (int) ($lead['stage_id'] ?? 0),
                     'to_stage_id' => (int) $stageId,
+                    'stage_id' => (int) $stageId,
+                    'manual_move' => true,
                 ]);
             } catch (\Throwable $e) {
             }

@@ -325,6 +325,9 @@ class AutomationEngine
 
         switch ($subtype) {
             case 'move_stage':
+                if (!empty($payload['manual_move'])) {
+                    break;
+                }
                 $stageId = (int) ($config['stage_id'] ?? 0);
                 if ($leadId && $stageId) {
                     Database::query(
@@ -597,6 +600,9 @@ class AutomationEngine
                     $log[] = ['action' => $type, 'ok' => true];
                 }
             } elseif ($type === 'move_stage' && !empty($payload['lead_id'])) {
+                if (!empty($payload['manual_move'])) {
+                    continue;
+                }
                 $sid = (int) ($cfg['stage_id'] ?? 0);
                 if ($sid > 0) {
                     Database::query(
