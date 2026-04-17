@@ -322,10 +322,74 @@ const AutomationBuilder = {
     },
 
     showAddNodeMenu(afterId, branch = null) {
-        // Por simplicidade, adiciona um action node padrao
-        // No futuro pode mostrar um modal com opcoes
-        // Passa o branch (yes/no) para conectar corretamente em condicoes
-        this.addNode('action', 'send_whatsapp', afterId, branch);
+        const overlayId = 'add-node-menu-overlay';
+        const existing = document.getElementById(overlayId);
+        if (existing) existing.remove();
+
+        const overlay = document.createElement('div');
+        overlay.id = overlayId;
+        overlay.className = 'fixed inset-0 z-[500] flex items-center justify-center bg-black/50 p-4';
+        overlay.innerHTML = `
+            <div class="w-full max-w-md rounded-2xl bg-white shadow-xl">
+                <div class="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+                    <h3 class="text-base font-semibold text-slate-900">Adicionar passo</h3>
+                    <button type="button" class="text-slate-400 hover:text-slate-600" data-close-add-menu>
+                        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                    </button>
+                </div>
+                <div class="space-y-5 px-5 py-4 max-h-[70vh] overflow-y-auto">
+                    ${this.renderAddNodeSection('action', 'Acoes', 'emerald')}
+                    ${this.renderAddNodeSection('condition', 'Condicoes', 'indigo')}
+                    ${this.renderAddNodeSection('delay', 'Espera', 'amber')}
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+
+        const close = () => overlay.remove();
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) close();
+            if (e.target.closest('[data-close-add-menu]')) close();
+        });
+
+        overlay.querySelectorAll('[data-node-add]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const type = btn.getAttribute('data-type');
+                const subtype = btn.getAttribute('data-subtype') || null;
+                close();
+                if (type === 'delay') {
+                    this.addNode('delay', null, afterId, branch);
+                } else {
+                    this.addNode(type, subtype, afterId, branch);
+                }
+            });
+        });
+    },
+
+    renderAddNodeSection(type, title, color) {
+        if (type === 'delay') {
+            return `
+                <div>
+                    <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-${color}-600">${title}</div>
+                    <button type="button" data-node-add data-type="delay" class="w-full rounded-lg border border-${color}-200 bg-${color}-50 px-3 py-2 text-left text-sm text-${color}-800 hover:bg-${color}-100">
+                        Esperar (delay)
+                    </button>
+                </div>
+            `;
+        }
+        const labels = this.nodeLabels[type] || {};
+        const items = Object.entries(labels).map(([subtype, label]) => `
+            <button type="button" data-node-add data-type="${type}" data-subtype="${subtype}"
+                class="rounded-lg border border-${color}-200 bg-${color}-50 px-3 py-2 text-left text-sm text-${color}-800 hover:bg-${color}-100">
+                ${label}
+            </button>
+        `).join('');
+        return `
+            <div>
+                <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-${color}-600">${title}</div>
+                <div class="grid grid-cols-2 gap-2">${items}</div>
+            </div>
+        `;
     },
 
     openNodeConfig(nodeId) {

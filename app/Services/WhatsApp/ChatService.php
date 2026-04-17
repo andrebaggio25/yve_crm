@@ -636,6 +636,21 @@ class ChatService
             $lookup = $evo->fetchContactByJid($apiUrl, $apiKey, $instanceName, $sentJid);
             $discoveredLid = EvolutionApiService::extractLidFromResponse($lookup['body'] ?? null);
 
+            // Fallback: se findContacts nao trouxe LID, tentar checkWhatsappNumbers
+            // passando o telefone do lead (em muitas versoes do Baileys o campo
+            // `lid` so aparece nesse endpoint).
+            if ($discoveredLid === '') {
+                $digitsForCheck = $phoneNormalized !== ''
+                    ? preg_replace('/\D/', '', $phoneNormalized)
+                    : preg_replace('/\D/', '', explode('@', $sentJid)[0] ?? '');
+                if ($digitsForCheck !== '') {
+                    $res = LidResolverService::resolveLidForPhone($tenantId, $digitsForCheck);
+                    if ($res && !empty($res['lid_jid'])) {
+                        $discoveredLid = (string) $res['lid_jid'];
+                    }
+                }
+            }
+
             if ($discoveredLid !== '') {
                 $phoneJid = (str_contains($sentJid, '@s.whatsapp.net') || str_contains($sentJid, '@c.us')) ? $sentJid : null;
                 LidResolverService::storeMapping(
@@ -652,6 +667,9 @@ class ChatService
                     'UPDATE conversations SET whatsapp_lid_jid = :jid WHERE id = :id AND tenant_id = :tenant_id AND (whatsapp_lid_jid IS NULL OR whatsapp_lid_jid = \'\')',
                     TenantAwareDatabase::mergeTenantParams([':jid' => $discoveredLid, ':id' => $conversationId])
                 );
+            } elseif ($leadId > 0) {
+                // Registra tentativa para o worker nao tentar de novo no mesmo minuto.
+                LidResolverService::markLidLookupAttempt($tenantId, $leadId);
             }
         }
 

@@ -4,6 +4,7 @@ namespace App\Services\Automation;
 
 use App\Core\App;
 use App\Core\Database;
+use App\Core\Env;
 use App\Helpers\PhoneHelper;
 use App\Services\WhatsApp\ChatService;
 use App\Core\TenantContext;
@@ -14,9 +15,27 @@ class AutomationEngine
      * Dispara regras ativas para o tenant.
      * Processa tanto fluxos visuais (flow_json) quanto regras legadas.
      *
+     * Quando AUTOMATION_ASYNC=1, enfileira em automation_job_queue em vez
+     * de executar inline, para nao bloquear o webhook que chamou.
+     *
      * @param array<string, mixed> $payload
      */
     public static function dispatch(int $tenantId, string $trigger, array $payload): void
+    {
+        if (self::isAsyncEnabled() && self::enqueueJob($tenantId, $trigger, $payload)) {
+            return;
+        }
+
+        self::dispatchSync($tenantId, $trigger, $payload);
+    }
+
+    /**
+     * Processa o dispatch de forma sincrona (usado pelo worker quando a flag
+     * async esta ativa, ou direto em fallback).
+     *
+     * @param array<string, mixed> $payload
+     */
+    public static function dispatchSync(int $tenantId, string $trigger, array $payload): void
     {
         $rules = Database::fetchAll(
             'SELECT * FROM automation_rules WHERE tenant_id = :tid AND is_active = 1 AND trigger_event = :tr ORDER BY priority DESC, id ASC',
@@ -35,6 +54,36 @@ class AutomationEngine
                 }
                 self::runLegacyActions($tenantId, $rule, $payload);
             }
+        }
+    }
+
+    private static function isAsyncEnabled(): bool
+    {
+        $v = Env::get('AUTOMATION_ASYNC', '0');
+
+        return $v === '1' || $v === 1 || $v === true || $v === 'true';
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private static function enqueueJob(int $tenantId, string $trigger, array $payload): bool
+    {
+        try {
+            Database::insert('automation_job_queue', [
+                'tenant_id' => $tenantId,
+                'trigger_event' => $trigger,
+                'payload_json' => json_encode($payload, JSON_UNESCAPED_UNICODE),
+                'status' => 'pending',
+                'attempts' => 0,
+                'scheduled_for' => date('Y-m-d H:i:s'),
+            ]);
+
+            return true;
+        } catch (\Throwable $e) {
+            App::logError('[AutomationEngine] enqueueJob fallback sync: ' . $e->getMessage());
+
+            return false;
         }
     }
 
@@ -284,8 +333,8 @@ class AutomationEngine
                 $tagId = (int) ($config['tag_id'] ?? 0);
                 if ($leadId && $tagId) {
                     $hasTag = Database::fetch(
-                        'SELECT 1 FROM lead_tag_items WHERE lead_id = :lid AND tag_id = :tid LIMIT 1',
-                        [':lid' => $leadId, ':tid' => $tagId]
+                        'SELECT 1 FROM lead_tag_items WHERE lead_id = :lid AND tag_id = :tid AND tenant_id = :ten LIMIT 1',
+                        [':lid' => $leadId, ':tid' => $tagId, ':ten' => $tenantId]
                     );
                     return (bool) $hasTag;
                 }
@@ -312,7 +361,9 @@ class AutomationEngine
                 return false;
 
             default:
-                return true;
+                // Subtipo desconhecido: ramo "nao" para evitar execucoes acidentais.
+                App::logError('[AutomationEngine] condicao desconhecida: ' . $subtype);
+                return false;
         }
     }
 
@@ -340,16 +391,41 @@ class AutomationEngine
             case 'add_tag':
                 $tagId = (int) ($config['tag_id'] ?? 0);
                 if ($leadId && $tagId) {
-                    // Verificar se ja existe
+                    // Valida ownership da tag: nao permite cross-tenant mesmo
+                    // que a regra tenha sido clonada/editada indevidamente.
+                    $tagOk = Database::fetch(
+                        'SELECT id FROM lead_tags WHERE id = :tid AND tenant_id = :ten LIMIT 1',
+                        [':tid' => $tagId, ':ten' => $tenantId]
+                    );
+                    if (!$tagOk) {
+                        App::logError("[AutomationEngine] add_tag tag_id={$tagId} fora do tenant={$tenantId}");
+                        break;
+                    }
+
                     $exists = Database::fetch(
-                        'SELECT 1 FROM lead_tag_items WHERE lead_id = :lid AND tag_id = :tid LIMIT 1',
-                        [':lid' => $leadId, ':tid' => $tagId]
+                        'SELECT 1 FROM lead_tag_items WHERE lead_id = :lid AND tag_id = :tid AND tenant_id = :ten LIMIT 1',
+                        [':lid' => $leadId, ':tid' => $tagId, ':ten' => $tenantId]
                     );
                     if (!$exists) {
                         Database::insert('lead_tag_items', [
                             'lead_id' => $leadId,
                             'tag_id' => $tagId,
+                            'tenant_id' => $tenantId,
                         ]);
+
+                        // Dispara evento tag_added para automacoes encadeadas,
+                        // com guarda anti-loop via _triggered_by_automation.
+                        if (empty($payload['_triggered_by_automation'])) {
+                            try {
+                                self::dispatch($tenantId, 'tag_added', [
+                                    'lead_id' => $leadId,
+                                    'tag_id' => $tagId,
+                                    '_triggered_by_automation' => $ruleId,
+                                ]);
+                            } catch (\Throwable $e) {
+                                App::logError('[AutomationEngine] dispatch tag_added', $e);
+                            }
+                        }
                     }
                 }
                 break;
@@ -358,8 +434,8 @@ class AutomationEngine
                 $tagId = (int) ($config['tag_id'] ?? 0);
                 if ($leadId && $tagId) {
                     Database::query(
-                        'DELETE FROM lead_tag_items WHERE lead_id = :lid AND tag_id = :tid',
-                        [':lid' => $leadId, ':tid' => $tagId]
+                        'DELETE FROM lead_tag_items WHERE lead_id = :lid AND tag_id = :tid AND tenant_id = :ten',
+                        [':lid' => $leadId, ':tid' => $tagId, ':ten' => $tenantId]
                     );
                 }
                 break;

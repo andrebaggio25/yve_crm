@@ -635,6 +635,17 @@ class LidResolverService
             $updateData['whatsapp_lid_jid'] = $lidForColumn;
         }
 
+        // Bookkeeping do self-healing: sempre registra tentativa para o worker saber
+        // que ja olhamos este lead (evita martelar a Evolution em loop).
+        if (self::leadHasLookupColumns()) {
+            $updateData['lid_lookup_last_at'] = date('Y-m-d H:i:s');
+            // Incrementa attempts apenas se nao achou LID; se achou, zera para permitir
+            // futuras re-sincronizacoes se um dia o LID for invalidado.
+            $updateData['lid_lookup_attempts'] = ($lidForColumn !== null && $lidForColumn !== '')
+                ? 0
+                : self::nextAttemptCount($tenantId, $leadId);
+        }
+
         Database::update(
             'leads',
             $updateData,
@@ -655,5 +666,74 @@ class LidResolverService
             'whatsapp_status' => (string) ($meta['whatsapp_status'] ?? ''),
             'whatsapp_jid' => $meta['whatsapp_jid'] ?? null,
         ];
+    }
+
+    /**
+     * Verifica em cache estatico se a tabela leads tem as colunas de bookkeeping
+     * do lookup (criadas pela migration 025). Mantem retrocompatibilidade se
+     * a migration ainda nao rodou.
+     */
+    private static bool|null $hasLookupColumns = null;
+
+    private static function leadHasLookupColumns(): bool
+    {
+        if (self::$hasLookupColumns !== null) {
+            return self::$hasLookupColumns;
+        }
+
+        try {
+            $row = Database::fetch(
+                "SELECT COUNT(*) AS c FROM information_schema.COLUMNS
+                 WHERE TABLE_SCHEMA = DATABASE()
+                   AND TABLE_NAME = 'leads'
+                   AND COLUMN_NAME = 'lid_lookup_attempts'"
+            );
+            self::$hasLookupColumns = $row && (int) ($row['c'] ?? 0) > 0;
+        } catch (\Throwable $e) {
+            self::$hasLookupColumns = false;
+        }
+
+        return self::$hasLookupColumns;
+    }
+
+    private static function nextAttemptCount(int $tenantId, int $leadId): int
+    {
+        try {
+            $row = Database::fetch(
+                'SELECT lid_lookup_attempts FROM leads WHERE id = :id AND tenant_id = :tid',
+                [':id' => $leadId, ':tid' => $tenantId]
+            );
+            $current = $row ? (int) ($row['lid_lookup_attempts'] ?? 0) : 0;
+
+            return min($current + 1, 10);
+        } catch (\Throwable $e) {
+            return 1;
+        }
+    }
+
+    /**
+     * Marca uma tentativa de resolucao (sem sucesso) para fins de backoff
+     * quando o chamador ja sabe que nao obteve LID.
+     */
+    public static function markLidLookupAttempt(int $tenantId, int $leadId): void
+    {
+        if (!self::leadHasLookupColumns()) {
+            return;
+        }
+
+        try {
+            $attempts = self::nextAttemptCount($tenantId, $leadId);
+            Database::update(
+                'leads',
+                [
+                    'lid_lookup_attempts' => $attempts,
+                    'lid_lookup_last_at' => date('Y-m-d H:i:s'),
+                ],
+                'id = :id AND tenant_id = :tid',
+                [':id' => $leadId, ':tid' => $tenantId]
+            );
+        } catch (\Throwable $e) {
+            App::logError('[LidResolver] markLidLookupAttempt falhou: ' . $e->getMessage());
+        }
     }
 }

@@ -550,13 +550,16 @@ class LeadController
             App::log("Lead {$id} movido para etapa {$newStage['name']}");
 
             try {
+                // manual_move removido intencionalmente: antes bloqueava a acao
+                // move_stage dentro de fluxos deste evento, tornando-a inutil.
+                // AutomationEngine previne loops dentro do mesmo flow via
+                // deteccao de ciclos por node_id.
                 AutomationEngine::dispatch(TenantContext::getEffectiveTenantId(), 'lead_stage_changed', [
                     'lead_id' => (int) $id,
                     'pipeline_id' => (int) $lead['pipeline_id'],
                     'from_stage_id' => (int) ($lead['stage_id'] ?? 0),
                     'to_stage_id' => (int) $stageId,
                     'stage_id' => (int) $stageId,
-                    'manual_move' => true,
                 ]);
             } catch (\Throwable $e) {
             }

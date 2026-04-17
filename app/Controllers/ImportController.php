@@ -9,6 +9,7 @@ use App\Core\Response;
 use App\Core\Session;
 use App\Helpers\LeadTagHelper;
 use App\Helpers\PhoneHelper;
+use App\Services\Automation\AutomationEngine;
 use App\Services\LeadImportService;
 use App\Services\WhatsApp\LidResolverService;
 use App\Core\TenantContext;
@@ -238,6 +239,7 @@ class ImportController
             'whatsapp_enriched' => 0,
         ];
         $importedForWa = [];
+        $importedIds = [];
 
         $db = TenantAwareDatabase::getInstance();
         $db->beginTransaction();
@@ -311,6 +313,11 @@ class ImportController
                 if ($phoneNormalized) {
                     $importedForWa[] = ['id' => (int) $leadId, 'phone' => (string) $phoneNormalized];
                 }
+                $importedIds[] = [
+                    'id' => (int) $leadId,
+                    'pipeline_id' => (int) $pipelineId,
+                    'stage_id' => (int) $stageId,
+                ];
             }
 
             $db->commit();
@@ -322,6 +329,21 @@ class ImportController
                     $results['whatsapp_enriched']++;
                 } catch (\Throwable $e) {
                     App::logError('Import WhatsApp enrich', $e);
+                }
+            }
+
+            // Dispara lead_created por lead importado (executa apos commit
+            // para garantir que as automacoes veem o lead persistido).
+            foreach ($importedIds as $row) {
+                try {
+                    AutomationEngine::dispatch($tid, 'lead_created', [
+                        'lead_id' => $row['id'],
+                        'pipeline_id' => $row['pipeline_id'],
+                        'stage_id' => $row['stage_id'],
+                        '_origin' => 'import',
+                    ]);
+                } catch (\Throwable $e) {
+                    App::logError('AutomationEngine import lead_created', $e);
                 }
             }
 

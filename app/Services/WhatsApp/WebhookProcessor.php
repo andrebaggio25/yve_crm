@@ -378,6 +378,21 @@ class WebhookProcessor
             return;
         }
 
+        // Dedupe: se ja processamos este whatsapp_message_id, sair cedo.
+        // Isso evita que retries do webhook (Evolution reenvia ate confirmar 2xx)
+        // gerem mensagens duplicadas ou disparem automacoes multiplas vezes.
+        $waMsgIdEarly = (string) ($key['id'] ?? '');
+        if ($waMsgIdEarly !== '') {
+            $dup = Database::fetch(
+                'SELECT id FROM messages WHERE tenant_id = :tid AND whatsapp_message_id = :w LIMIT 1',
+                [':tid' => $tenantId, ':w' => $waMsgIdEarly]
+            );
+            if ($dup) {
+                App::log("[WebhookProcessor] inbound duplicado ignorado wa_id={$waMsgIdEarly}");
+                return;
+            }
+        }
+
         // #region agent log — estrutura do payload LID
         $remoteJidRaw = (string) ($key['remoteJid'] ?? '');
         if (str_ends_with($remoteJidRaw, '@lid')) {
@@ -562,6 +577,26 @@ class WebhookProcessor
                     $lidOnly,
                     $remoteJidFull !== '' ? $remoteJidFull : null
                 );
+
+                // Dispara lead_created apenas quando o lead ficou "real" (nao
+                // provisional). Leads provisionais esperam triagem manual ou
+                // reconcile via LID antes de rodar automacoes.
+                if ($leadId > 0 && !$lidOnly) {
+                    $leadRow = Database::fetch(
+                        'SELECT pipeline_id, stage_id FROM leads WHERE id = :id AND tenant_id = :tid',
+                        [':id' => $leadId, ':tid' => $tenantId]
+                    );
+                    try {
+                        AutomationEngine::dispatch($tenantId, 'lead_created', [
+                            'lead_id' => (int) $leadId,
+                            'pipeline_id' => (int) ($leadRow['pipeline_id'] ?? 0),
+                            'stage_id' => (int) ($leadRow['stage_id'] ?? 0),
+                            '_origin' => 'whatsapp_inbound',
+                        ]);
+                    } catch (\Throwable $e) {
+                        App::logError('AutomationEngine inbound lead_created', $e);
+                    }
+                }
             }
         }
 
@@ -706,6 +741,10 @@ class WebhookProcessor
                 unset($resolved['wa_meta']['wa_lid_only']);
 
                 LidResolverService::storeMapping($tenantId, $lidJid, $realNorm, $phoneJid, 'find_contacts');
+                // Camada 4: reconcilia imediatamente leads existentes que ja
+                // tinham esse phone real (provisional ou nao) com este LID.
+                // Impede que o chamador crie um provisional novo em seguida.
+                LidResolverService::reconcileLeadsOnMapping($tenantId, $lidJid, $realNorm);
             } else {
                 DebugAgentLog::write('FETCH_CONTACT_NO_PHONE', 'WebhookProcessor::applyLidResolutionPipeline', 'sem telefone no contato LID', [
                     'http' => $contactRes['http'],
@@ -1302,7 +1341,24 @@ class WebhookProcessor
             ]
         );
 
-        return (int) Database::getInstance()->lastInsertId();
+        $newLeadId = (int) Database::getInstance()->lastInsertId();
+
+        // Camada 1: quando o lead tem telefone real (nao-provisional), tenta
+        // resolver o LID imediatamente via Evolution para evitar duplicidade
+        // se no futuro um webhook @lid chegar sem reverse mapping.
+        if (!$lidOnly && $newLeadId > 0 && $phoneVal !== null && $phoneVal !== '') {
+            try {
+                LidResolverService::enrichLeadMetadataAfterPhoneCheck(
+                    $tenantId,
+                    $newLeadId,
+                    $phoneVal
+                );
+            } catch (\Throwable $e) {
+                App::logError('[WebhookProcessor] enrichLeadMetadataAfterPhoneCheck (inbound create): ' . $e->getMessage());
+            }
+        }
+
+        return $newLeadId;
     }
 
     /**

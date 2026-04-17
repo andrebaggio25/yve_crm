@@ -2,7 +2,10 @@
 
 namespace App\Helpers;
 
+use App\Core\App;
 use App\Core\TenantAwareDatabase;
+use App\Core\TenantContext;
+use App\Services\Automation\AutomationEngine;
 use App\Services\LeadImportService;
 
 class LeadTagHelper
@@ -34,6 +37,13 @@ class LeadTagHelper
      */
     public static function attachTagsToLead(int $leadId, array $tagIds): void
     {
+        $tenantId = 0;
+        try {
+            $tenantId = (int) TenantContext::getEffectiveTenantId();
+        } catch (\Throwable $e) {
+            $tenantId = 0;
+        }
+
         foreach ($tagIds as $tid) {
             if (!$tid) {
                 continue;
@@ -50,6 +60,18 @@ class LeadTagHelper
                 'lead_id' => $leadId,
                 'tag_id' => $tid,
             ]);
+
+            // Dispara o evento tag_added para automacoes escutarem.
+            if ($tenantId > 0) {
+                try {
+                    AutomationEngine::dispatch($tenantId, 'tag_added', [
+                        'lead_id' => $leadId,
+                        'tag_id' => $tid,
+                    ]);
+                } catch (\Throwable $e) {
+                    App::logError('AutomationEngine tag_added (attach)', $e);
+                }
+            }
         }
     }
 
