@@ -17,7 +17,7 @@ const API = {
         }
         if (trimmed[0] === '{' || trimmed[0] === '[') {
             try {
-                return JSON.parse(text);
+                return JSON.parse(trimmed);
             } catch (e) {
                 return {
                     success: false,

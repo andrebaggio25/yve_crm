@@ -19,9 +19,9 @@ const Dashboard = {
     },
 
     async init() {
-        await this.loadFilterOptions();
         this.bindFilters();
         await this.loadMetrics();
+        void this.loadFilterOptions();
     },
 
     bindFilters() {
@@ -64,18 +64,34 @@ const Dashboard = {
         }
     },
 
+    showDashboardError(msg) {
+        const el = document.getElementById('dashboard-error');
+        if (!el) return;
+        el.textContent = msg || 'Nao foi possivel carregar as metricas.';
+        el.classList.remove('hidden');
+    },
+
+    clearDashboardError() {
+        document.getElementById('dashboard-error')?.classList.add('hidden');
+    },
+
     async loadMetrics() {
+        this.clearDashboardError();
         try {
             const data = await API.dashboard.metrics(this.getQueryParams());
-            if (data.success) {
+            if (data.success && data.data) {
                 this.updateStats(data.data);
                 this.renderFunnel(data.data.leads_by_stage);
                 this.renderTrend(data.data.leads_by_day);
                 this.renderTemperature(data.data.leads_by_temperature);
                 this.renderActivities(data.data.recent_events || []);
+            } else {
+                this.showDashboardError(data.message || 'Resposta invalida do servidor.');
             }
         } catch (error) {
             console.error('Erro ao carregar metricas:', error);
+            const m = error?.data?.message || error?.message || 'Erro ao carregar metricas.';
+            this.showDashboardError(m);
         }
     },
 
@@ -93,12 +109,12 @@ const Dashboard = {
 
         set('stat-total-leads', (m.total_leads ?? 0).toLocaleString('pt-BR'));
         set('stat-conversion', `${Number(m.conversion_rate ?? 0).toFixed(1)}%`);
-        set('stat-revenue', window.App.formatCurrency(m.won_value ?? 0));
+        set('stat-revenue', this.formatCurrency(m.won_value ?? 0));
         set('stat-overdue', String(m.leads_overdue ?? 0));
         const od = document.getElementById('stat-overdue');
         if (od) od.classList.toggle('text-red-600', (m.leads_overdue ?? 0) > 0);
 
-        set('stat-pipeline-open', window.App.formatCurrency(m.pipeline_open_value ?? 0));
+        set('stat-pipeline-open', this.formatCurrency(m.pipeline_open_value ?? 0));
         set('stat-active', (m.active_leads ?? 0).toLocaleString('pt-BR'));
         set('stat-wa-unread', (m.wa_unread_total ?? 0).toLocaleString('pt-BR'));
         set('stat-wa-conv', (m.conversations_open ?? 0).toLocaleString('pt-BR'));
@@ -277,7 +293,15 @@ const Dashboard = {
     },
 
     formatCurrency(value) {
-        return window.App.formatCurrency(value);
+        const n = Number(value ?? 0);
+        if (typeof window.App !== 'undefined' && typeof window.App.formatCurrency === 'function') {
+            return window.App.formatCurrency(n);
+        }
+        try {
+            return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(n);
+        } catch {
+            return String(n);
+        }
     },
 };
 

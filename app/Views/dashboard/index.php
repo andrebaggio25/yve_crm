@@ -3,6 +3,7 @@ $title = 'Dashboard';
 $pageTitle = 'Dashboard';
 ?>
 <div class="dashboard-page mx-auto w-full max-w-7xl space-y-5 pb-8">
+    <div id="dashboard-error" class="hidden rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800" role="alert"></div>
     <!-- Filtros -->
     <div class="flex flex-col gap-3 rounded-xl border border-slate-200/80 bg-white p-4 shadow-sm sm:flex-row sm:flex-wrap sm:items-end sm:gap-4">
         <div class="flex flex-col gap-1">

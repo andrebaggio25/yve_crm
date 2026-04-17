@@ -19,6 +19,16 @@ class DashboardController
 
     public function apiMetrics(Request $request, Response $response): void
     {
+        try {
+            $this->computeMetrics($request, $response);
+        } catch (\Throwable $e) {
+            App::logError('Dashboard apiMetrics', $e);
+            $response->jsonError('Erro ao calcular metricas do dashboard', 500);
+        }
+    }
+
+    private function computeMetrics(Request $request, Response $response): void
+    {
         $period = (int) $request->get('period', '30');
         $period = max(1, min(365, $period));
 
@@ -31,6 +41,7 @@ class DashboardController
 
         $whereClauses = ['l.deleted_at IS NULL', 'l.tenant_id = :tenant_id'];
         $params = TenantAwareDatabase::mergeTenantParams();
+        $tenantId = (int) ($params[':tenant_id'] ?? 1);
 
         if ($pipelineId) {
             $whereClauses[] = 'l.pipeline_id = :pipeline_id';
@@ -50,12 +61,12 @@ class DashboardController
         )['total'] ?? 0;
 
         $leadsByStage = TenantAwareDatabase::fetchAll(
-            "SELECT ps.name as stage_name, COUNT(l.id) as total, SUM(l.value) as value
+            "SELECT COALESCE(ps.name, 'Sem etapa') as stage_name, COUNT(l.id) as total, SUM(l.value) as value
              FROM leads l
-             JOIN pipeline_stages ps ON l.stage_id = ps.id AND ps.tenant_id = l.tenant_id
+             LEFT JOIN pipeline_stages ps ON l.stage_id = ps.id AND ps.tenant_id = l.tenant_id
              WHERE {$whereSql}
-             GROUP BY ps.id, ps.name
-             ORDER BY ps.position",
+             GROUP BY ps.id, ps.name, ps.position
+             ORDER BY COALESCE(ps.position, 999), ps.name",
             $params
         );
 
@@ -116,16 +127,14 @@ class DashboardController
             }
         }
 
-        $tid = (int) \App\Core\TenantContext::getEffectiveTenantId();
-
         $convOpen = TenantAwareDatabase::fetch(
-            "SELECT COUNT(*) as c FROM conversations WHERE tenant_id = :tid AND status <> 'closed'",
-            [':tid' => $tid]
+            'SELECT COUNT(*) as c FROM conversations WHERE tenant_id = :tenant_id AND status <> \'closed\'',
+            [':tenant_id' => $tenantId]
         )['c'] ?? 0;
 
         $waUnread = TenantAwareDatabase::fetch(
-            "SELECT COALESCE(SUM(unread_count), 0) as s FROM conversations WHERE tenant_id = :tid AND status <> 'closed'",
-            [':tid' => $tid]
+            'SELECT COALESCE(SUM(unread_count), 0) as s FROM conversations WHERE tenant_id = :tenant_id AND status <> \'closed\'',
+            [':tenant_id' => $tenantId]
         )['s'] ?? 0;
 
         $msgCounts = TenantAwareDatabase::fetch(
@@ -133,8 +142,8 @@ class DashboardController
                 SUM(CASE WHEN direction = 'inbound' THEN 1 ELSE 0 END) as inbound,
                 SUM(CASE WHEN direction = 'outbound' THEN 1 ELSE 0 END) as outbound
              FROM messages
-             WHERE tenant_id = :tid AND created_at >= :date_from",
-            [':tid' => $tid, ':date_from' => $dateFrom]
+             WHERE tenant_id = :tenant_id AND created_at >= :date_from",
+            [':tenant_id' => $tenantId, ':date_from' => $dateFrom]
         );
 
         $leadsByDay = TenantAwareDatabase::fetchAll(
@@ -142,7 +151,7 @@ class DashboardController
              FROM leads l
              WHERE {$whereSql} AND l.created_at >= :date_from
              GROUP BY DATE(l.created_at)
-             ORDER BY d ASC",
+             ORDER BY DATE(l.created_at) ASC",
             array_merge($params, [':date_from' => $dateFrom])
         );
 
