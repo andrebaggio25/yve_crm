@@ -265,10 +265,10 @@ const Inbox = {
         const isHttp = /^https?:\/\//i.test(url);
 
         if (type === 'image' || type === 'sticker') {
-            // Limita imagens a max 280px de altura para nao ficarem gigantes
+            // Imagens menores e proporcionais - max 180px altura, max 240px largura
             const cls = type === 'sticker'
-                ? 'h-auto max-h-32 w-auto max-w-[180px] cursor-pointer rounded-lg object-contain'
-                : 'h-auto max-h-[280px] w-auto max-w-full cursor-pointer rounded-lg object-cover';
+                ? 'h-auto max-h-28 w-auto max-w-[160px] cursor-pointer rounded-lg object-contain'
+                : 'h-auto max-h-[180px] w-auto max-w-[240px] cursor-pointer rounded-lg object-cover';
             const safe = this.escape(url);
             return `<div class="${topPad} overflow-hidden rounded-lg">
                 <img src="${safe}" alt="" loading="lazy" class="${cls}" data-inbox-lightbox="${safe}" referrerpolicy="no-referrer" />
@@ -287,13 +287,14 @@ const Inbox = {
             const pttBadge = ptt
                 ? `<span class="shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${out ? 'bg-white/30 text-white' : 'bg-primary-100 text-primary-700'}">voz</span>`
                 : '';
-            // Sempre tenta usar WaveSurfer primeiro, com fallback automatico
+            // Player com SVG no botao de play
+            const playIcon = `<svg viewBox="0 0 24 24" fill="currentColor" class="h-4 w-4"><path d="M8 5v14l11-7z"/></svg>`;
             const outCls = out ? 'inbox-audio-out' : '';
             const border = out ? 'border-white/30 bg-black/20' : 'border-slate-200 bg-white';
             const pad = compact ? 'px-2 py-1' : 'px-2 py-1.5';
             return `<div class="inbox-audio-player ${topPad} w-full max-w-[260px] rounded-full border ${border} ${pad} ${outCls}" data-inbox-audio data-audio-src="${this.escape(url)}">
                 <div class="flex items-center gap-2">
-                    <button type="button" data-play class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${out ? 'bg-white text-primary-600' : 'bg-primary-600 text-white'} text-[10px] shadow-sm">▶</button>
+                    <button type="button" data-play class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${out ? 'bg-white text-primary-600' : 'bg-primary-600 text-white'} shadow-sm">${playIcon}</button>
                     <div class="min-h-[28px] min-w-0 flex-1" data-waveform></div>
                     ${pttBadge}
                     <span data-time class="shrink-0 font-mono text-[10px] tabular-nums opacity-90">0:00</span>
