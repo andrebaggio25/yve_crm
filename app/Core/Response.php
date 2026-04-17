@@ -175,4 +175,36 @@ class Response
         readfile($filePath);
         exit;
     }
+
+    /**
+     * Envia arquivo com Content-Disposition inline ou attachment.
+     */
+    public function file(
+        string $filePath,
+        string $contentType,
+        string $disposition = 'inline',
+        ?string $downloadName = null
+    ): void {
+        if (!is_file($filePath)) {
+            $this->jsonError('Arquivo nao encontrado', 404);
+        }
+        $len = filesize($filePath);
+        if ($len === false) {
+            $this->jsonError('Arquivo invalido', 500);
+        }
+        $fn = $downloadName ?: basename($filePath);
+        $fnSafe = str_replace(['"', "\r", "\n"], '', $fn);
+        $disp = $disposition === 'attachment'
+            ? 'attachment; filename="' . $fnSafe . '"'
+            : 'inline';
+
+        $this->setStatusCode(200);
+        $this->setHeader('Content-Type', $contentType);
+        $this->setHeader('Content-Disposition', $disp);
+        $this->setHeader('Content-Length', (string) $len);
+        $this->setHeader('Cache-Control', 'private, max-age=86400');
+        $this->sendHeaders();
+        readfile($filePath);
+        exit;
+    }
 }

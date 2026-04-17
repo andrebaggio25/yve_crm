@@ -60,6 +60,111 @@ class EvolutionApiService
     }
 
     /**
+     * Decodifica midia a partir do envelope completo da mensagem (webhook Baileys).
+     *
+     * @param array<string, mixed> $webhookMessage Objeto da mensagem como recebido (key + message + ...).
+     * @return array{ok:bool,http:int,body:mixed,raw:string}
+     */
+    public function getBase64FromMediaMessage(string $baseUrl, string $apiKey, string $instanceName, array $webhookMessage): array
+    {
+        $baseUrl = rtrim($baseUrl, '/');
+        $url = $baseUrl . '/chat/getBase64FromMediaMessage/' . rawurlencode($instanceName);
+        $payload = json_encode([
+            'message' => $webhookMessage,
+            'convertToMp4' => false,
+        ], JSON_UNESCAPED_UNICODE);
+
+        return $this->request('POST', $url, $apiKey, $payload, 120);
+    }
+
+    /**
+     * Extrai bytes e metadados da resposta JSON do getBase64FromMediaMessage.
+     *
+     * @return array{binary: string, mimetype: string, fileName: string|null}|null
+     */
+    public static function parseMediaDecryptResponse(mixed $body): ?array
+    {
+        if (!is_array($body)) {
+            return null;
+        }
+        $b64 = '';
+        if (isset($body['base64']) && is_string($body['base64'])) {
+            $b64 = $body['base64'];
+        }
+        if ($b64 === '' && isset($body['data']['base64']) && is_string($body['data']['base64'])) {
+            $b64 = $body['data']['base64'];
+        }
+        if ($b64 !== '' && str_starts_with($b64, 'data:')) {
+            $parts = explode(',', $b64, 2);
+            $b64 = $parts[1] ?? '';
+        }
+        $bin = base64_decode($b64, true);
+        if ($bin === false || $bin === '') {
+            return null;
+        }
+        $mime = '';
+        if (isset($body['mimetype']) && is_string($body['mimetype'])) {
+            $mime = $body['mimetype'];
+        }
+        if ($mime === '' && isset($body['mimeType']) && is_string($body['mimeType'])) {
+            $mime = $body['mimeType'];
+        }
+        $fn = null;
+        if (isset($body['fileName']) && is_string($body['fileName']) && $body['fileName'] !== '') {
+            $fn = $body['fileName'];
+        }
+
+        return ['binary' => $bin, 'mimetype' => $mime, 'fileName' => $fn];
+    }
+
+    /**
+     * Envia midia (imagem, video ou documento). Campo media: base64 cru (sem prefixo data:).
+     *
+     * @return array{ok:bool,http:int,body:mixed,raw:string}
+     */
+    public function sendMedia(
+        string $baseUrl,
+        string $apiKey,
+        string $instanceName,
+        string $number,
+        string $mediatype,
+        string $mimetype,
+        string $mediaBase64,
+        string $caption,
+        string $fileName
+    ): array {
+        $baseUrl = rtrim($baseUrl, '/');
+        $url = $baseUrl . '/message/sendMedia/' . rawurlencode($instanceName);
+        $payload = json_encode([
+            'number' => $number,
+            'mediatype' => $mediatype,
+            'mimetype' => $mimetype,
+            'caption' => $caption,
+            'media' => $mediaBase64,
+            'fileName' => $fileName,
+        ], JSON_UNESCAPED_UNICODE);
+
+        return $this->request('POST', $url, $apiKey, $payload, 120);
+    }
+
+    /**
+     * Envia audio como nota de voz (PTT). Campo audio: base64 cru ou URL publica.
+     *
+     * @return array{ok:bool,http:int,body:mixed,raw:string}
+     */
+    public function sendWhatsAppAudio(string $baseUrl, string $apiKey, string $instanceName, string $number, string $audioBase64): array
+    {
+        $baseUrl = rtrim($baseUrl, '/');
+        $url = $baseUrl . '/message/sendWhatsAppAudio/' . rawurlencode($instanceName);
+        $payload = json_encode([
+            'number' => $number,
+            'audio' => $audioBase64,
+        ], JSON_UNESCAPED_UNICODE);
+
+        return $this->request('POST', $url, $apiKey, $payload, 120);
+    }
+
+    /**
      * Obtem estado da conexao.
      * @return array{ok:bool,http:int,body:mixed,raw:string}
      */
@@ -375,7 +480,7 @@ class EvolutionApiService
     /**
      * @return array{ok:bool,http:int,body:mixed,raw:string}
      */
-    private function request(string $method, string $url, string $apiKey, ?string $jsonBody): array
+    private function request(string $method, string $url, string $apiKey, ?string $jsonBody, int $timeoutSeconds = 30): array
     {
         if (class_exists('App\Core\App')) {
             App::log("[EvolutionAPI] Request: {$method} {$url}");
@@ -401,7 +506,7 @@ class EvolutionApiService
         curl_setopt_array($ch, [
             CURLOPT_CUSTOMREQUEST => $method,
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => 30,
+            CURLOPT_TIMEOUT => $timeoutSeconds,
             CURLOPT_HTTPHEADER => $headers,
         ]);
 

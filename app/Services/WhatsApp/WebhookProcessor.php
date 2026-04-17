@@ -8,6 +8,7 @@ use App\Helpers\DebugAgentLog;
 use App\Helpers\PhoneHelper;
 use App\Services\Automation\AutomationEngine;
 use App\Services\WhatsApp\LidResolverService;
+use App\Services\WhatsApp\MediaStorageService;
 
 /**
  * Processa webhooks da Evolution API (mensagens recebidas, etc.).
@@ -368,6 +369,138 @@ class WebhookProcessor
         return null;
     }
 
+    /**
+     * @return array{text: string, type: string, mediaUrl: ?string, mime: ?string, filename: ?string, durationSec: ?int, mediaPtt: int}
+     */
+    private function parseBaileysMessageBlock(array $messageBlock): array
+    {
+        $text = '';
+        $type = 'text';
+        $mediaUrl = null;
+        $mime = null;
+        $filename = null;
+        $durationSec = null;
+        $mediaPtt = 0;
+
+        if (isset($messageBlock['conversation'])) {
+            $text = (string) $messageBlock['conversation'];
+        } elseif (isset($messageBlock['extendedTextMessage']['text'])) {
+            $text = (string) $messageBlock['extendedTextMessage']['text'];
+        } elseif (isset($messageBlock['imageMessage'])) {
+            $type = 'image';
+            $im = $messageBlock['imageMessage'];
+            $text = (string) ($im['caption'] ?? '');
+            $mediaUrl = isset($im['url']) ? (string) $im['url'] : null;
+            $mime = isset($im['mimetype']) ? (string) $im['mimetype'] : null;
+        } elseif (isset($messageBlock['audioMessage'])) {
+            $type = 'audio';
+            $am = $messageBlock['audioMessage'];
+            $mediaUrl = isset($am['url']) ? (string) $am['url'] : null;
+            $mime = isset($am['mimetype']) ? (string) $am['mimetype'] : null;
+            $mediaPtt = !empty($am['ptt']) ? 1 : 0;
+            if (isset($am['seconds'])) {
+                $durationSec = (int) $am['seconds'];
+            }
+        } elseif (isset($messageBlock['videoMessage'])) {
+            $type = 'video';
+            $vm = $messageBlock['videoMessage'];
+            $text = (string) ($vm['caption'] ?? '');
+            $mediaUrl = isset($vm['url']) ? (string) $vm['url'] : null;
+            $mime = isset($vm['mimetype']) ? (string) $vm['mimetype'] : null;
+            if (isset($vm['seconds'])) {
+                $durationSec = (int) $vm['seconds'];
+            }
+        } elseif (isset($messageBlock['ptvMessage'])) {
+            $type = 'video';
+            $pv = $messageBlock['ptvMessage'];
+            $mediaUrl = isset($pv['url']) ? (string) $pv['url'] : null;
+            $mime = isset($pv['mimetype']) ? (string) $pv['mimetype'] : null;
+            if (isset($pv['seconds'])) {
+                $durationSec = (int) $pv['seconds'];
+            }
+        } elseif (isset($messageBlock['stickerMessage'])) {
+            $type = 'sticker';
+            $sm = $messageBlock['stickerMessage'];
+            $mediaUrl = isset($sm['url']) ? (string) $sm['url'] : null;
+            $mime = isset($sm['mimetype']) ? (string) $sm['mimetype'] : 'image/webp';
+        } elseif (isset($messageBlock['documentMessage'])) {
+            $type = 'document';
+            $dm = $messageBlock['documentMessage'];
+            $text = (string) ($dm['caption'] ?? '');
+            $mediaUrl = isset($dm['url']) ? (string) $dm['url'] : null;
+            $mime = isset($dm['mimetype']) ? (string) $dm['mimetype'] : null;
+            $filename = isset($dm['fileName']) ? (string) $dm['fileName'] : null;
+        }
+
+        return [
+            'text' => $text,
+            'type' => $type,
+            'mediaUrl' => $mediaUrl,
+            'mime' => $mime,
+            'filename' => $filename,
+            'durationSec' => $durationSec,
+            'mediaPtt' => $mediaPtt,
+        ];
+    }
+
+    /**
+     * @return array{media_local_path: ?string, media_size_bytes: ?int, media_mime_type: ?string}
+     */
+    private function decryptMediaFromWebhookMessage(
+        array $fullMsg,
+        array $instRow,
+        int $tenantId,
+        string $direction,
+        ?string $fallbackMime,
+        ?string $fallbackFilename
+    ): array {
+        $out = [
+            'media_local_path' => null,
+            'media_size_bytes' => null,
+            'media_mime_type' => null,
+        ];
+        $apiUrl = (string) ($instRow['api_url'] ?? '');
+        $apiKey = (string) ($instRow['api_key'] ?? '');
+        $instanceName = (string) ($instRow['instance_name'] ?? '');
+        if ($apiUrl === '' || $apiKey === '' || $instanceName === '') {
+            return $out;
+        }
+
+        try {
+            $evo = new EvolutionApiService();
+            $res = $evo->getBase64FromMediaMessage($apiUrl, $apiKey, $instanceName, $fullMsg);
+            if (!$res['ok']) {
+                App::log('[WebhookProcessor] getBase64FromMediaMessage http=' . ($res['http'] ?? 0));
+
+                return $out;
+            }
+            $parsed = EvolutionApiService::parseMediaDecryptResponse($res['body'] ?? null);
+            if ($parsed === null) {
+                return $out;
+            }
+            $useMime = $parsed['mimetype'] !== '' ? $parsed['mimetype'] : ($fallbackMime ?: 'application/octet-stream');
+            if (!MediaStorageService::mimeAllowed($useMime)) {
+                App::log('[WebhookProcessor] mime apos decrypt nao permitido: ' . $useMime);
+
+                return $out;
+            }
+            $stored = MediaStorageService::store(
+                $tenantId,
+                $direction,
+                $parsed['binary'],
+                $useMime,
+                $parsed['fileName'] ?? $fallbackFilename
+            );
+            $out['media_local_path'] = $stored['relative_path'];
+            $out['media_size_bytes'] = $stored['size'];
+            $out['media_mime_type'] = $useMime;
+        } catch (\Throwable $e) {
+            App::log('[WebhookProcessor] decryptMediaFromWebhookMessage: ' . $e->getMessage());
+        }
+
+        return $out;
+    }
+
     private function processOneMessage(array $msg, int $tenantId, int $whatsappInstanceId, string $eventName = ''): void
     {
         $key = $msg['key'] ?? [];
@@ -478,34 +611,27 @@ class WebhookProcessor
         // #endregion
 
         $messageBlock = $msg['message'] ?? [];
-        $text = '';
-        $type = 'text';
-        $mediaUrl = null;
-        $mime = null;
-        $filename = null;
+        $parsed = $this->parseBaileysMessageBlock($messageBlock);
+        $text = $parsed['text'];
+        $type = $parsed['type'];
+        $mediaUrl = $parsed['mediaUrl'];
+        $mime = $parsed['mime'];
+        $filename = $parsed['filename'];
+        $durationSec = $parsed['durationSec'];
+        $mediaPtt = $parsed['mediaPtt'];
 
-        if (isset($messageBlock['conversation'])) {
-            $text = (string) $messageBlock['conversation'];
-        } elseif (isset($messageBlock['extendedTextMessage']['text'])) {
-            $text = (string) $messageBlock['extendedTextMessage']['text'];
-        } elseif (isset($messageBlock['imageMessage'])) {
-            $type = 'image';
-            $im = $messageBlock['imageMessage'];
-            $text = (string) ($im['caption'] ?? '');
-            $mediaUrl = isset($im['url']) ? (string) $im['url'] : null;
-            $mime = isset($im['mimetype']) ? (string) $im['mimetype'] : null;
-        } elseif (isset($messageBlock['audioMessage'])) {
-            $type = 'audio';
-            $am = $messageBlock['audioMessage'];
-            $mediaUrl = isset($am['url']) ? (string) $am['url'] : null;
-            $mime = isset($am['mimetype']) ? (string) $am['mimetype'] : null;
-        } elseif (isset($messageBlock['documentMessage'])) {
-            $type = 'document';
-            $dm = $messageBlock['documentMessage'];
-            $text = (string) ($dm['caption'] ?? '');
-            $mediaUrl = isset($dm['url']) ? (string) $dm['url'] : null;
-            $mime = isset($dm['mimetype']) ? (string) $dm['mimetype'] : null;
-            $filename = isset($dm['fileName']) ? (string) $dm['fileName'] : null;
+        $mediaLocalPath = null;
+        $mediaSizeBytes = null;
+        if (in_array($type, ['image', 'audio', 'video', 'document', 'sticker'], true)) {
+            $dec = $this->decryptMediaFromWebhookMessage($msg, $instRow, $tenantId, 'inbound', $mime, $filename);
+            if ($dec['media_local_path'] !== null) {
+                $mediaLocalPath = $dec['media_local_path'];
+                $mediaSizeBytes = $dec['media_size_bytes'];
+                if ($dec['media_mime_type'] !== null && $dec['media_mime_type'] !== '') {
+                    $mime = $dec['media_mime_type'];
+                }
+                $mediaUrl = null;
+            }
         }
 
         $waMsgId = (string) ($key['id'] ?? '');
@@ -648,8 +774,8 @@ class WebhookProcessor
         }
 
         Database::query(
-            'INSERT INTO messages (tenant_id, conversation_id, whatsapp_message_id, direction, sender_type, type, content, media_url, media_mime_type, media_filename, status, metadata_json)
-             VALUES (:tid, :cid, :wmid, \'inbound\', \'contact\', :typ, :content, :murl, :mime, :fname, \'delivered\', :meta)',
+            'INSERT INTO messages (tenant_id, conversation_id, whatsapp_message_id, direction, sender_type, type, content, media_url, media_mime_type, media_filename, media_local_path, media_size_bytes, media_duration_seconds, media_ptt, status, metadata_json)
+             VALUES (:tid, :cid, :wmid, \'inbound\', \'contact\', :typ, :content, :murl, :mime, :fname, :mlpath, :msize, :mdur, :mptt, \'delivered\', :meta)',
             [
                 ':tid' => $tenantId,
                 ':cid' => $convId,
@@ -659,6 +785,10 @@ class WebhookProcessor
                 ':murl' => $mediaUrl,
                 ':mime' => $mime,
                 ':fname' => $filename,
+                ':mlpath' => $mediaLocalPath,
+                ':msize' => $mediaSizeBytes,
+                ':mdur' => $durationSec,
+                ':mptt' => $mediaPtt,
                 ':meta' => json_encode(['raw_event' => $eventName ?: 'messages'], JSON_UNESCAPED_UNICODE),
             ]
         );
@@ -817,34 +947,27 @@ class WebhookProcessor
         $waMetaJson = json_encode($resolved['wa_meta'], JSON_UNESCAPED_UNICODE);
 
         $messageBlock = $msg['message'] ?? [];
-        $text = '';
-        $type = 'text';
-        $mediaUrl = null;
-        $mime = null;
-        $filename = null;
+        $parsedOut = $this->parseBaileysMessageBlock($messageBlock);
+        $text = $parsedOut['text'];
+        $type = $parsedOut['type'];
+        $mediaUrl = $parsedOut['mediaUrl'];
+        $mime = $parsedOut['mime'];
+        $filename = $parsedOut['filename'];
+        $durationSecOut = $parsedOut['durationSec'];
+        $mediaPttOut = $parsedOut['mediaPtt'];
 
-        if (isset($messageBlock['conversation'])) {
-            $text = (string) $messageBlock['conversation'];
-        } elseif (isset($messageBlock['extendedTextMessage']['text'])) {
-            $text = (string) $messageBlock['extendedTextMessage']['text'];
-        } elseif (isset($messageBlock['imageMessage'])) {
-            $type = 'image';
-            $im = $messageBlock['imageMessage'];
-            $text = (string) ($im['caption'] ?? '');
-            $mediaUrl = isset($im['url']) ? (string) $im['url'] : null;
-            $mime = isset($im['mimetype']) ? (string) $im['mimetype'] : null;
-        } elseif (isset($messageBlock['audioMessage'])) {
-            $type = 'audio';
-            $am = $messageBlock['audioMessage'];
-            $mediaUrl = isset($am['url']) ? (string) $am['url'] : null;
-            $mime = isset($am['mimetype']) ? (string) $am['mimetype'] : null;
-        } elseif (isset($messageBlock['documentMessage'])) {
-            $type = 'document';
-            $dm = $messageBlock['documentMessage'];
-            $text = (string) ($dm['caption'] ?? '');
-            $mediaUrl = isset($dm['url']) ? (string) $dm['url'] : null;
-            $mime = isset($dm['mimetype']) ? (string) $dm['mimetype'] : null;
-            $filename = isset($dm['fileName']) ? (string) $dm['fileName'] : null;
+        $mediaLocalPathOut = null;
+        $mediaSizeBytesOut = null;
+        if (in_array($type, ['image', 'audio', 'video', 'document', 'sticker'], true)) {
+            $decO = $this->decryptMediaFromWebhookMessage($msg, $instRow, $tenantId, 'outbound', $mime, $filename);
+            if ($decO['media_local_path'] !== null) {
+                $mediaLocalPathOut = $decO['media_local_path'];
+                $mediaSizeBytesOut = $decO['media_size_bytes'];
+                if ($decO['media_mime_type'] !== null && $decO['media_mime_type'] !== '') {
+                    $mime = $decO['media_mime_type'];
+                }
+                $mediaUrl = null;
+            }
         }
 
         $lidJid = $pairs['lid'] !== '' ? $pairs['lid'] : (($remoteFull !== '' && str_ends_with($remoteFull, '@lid')) ? $remoteFull : null);
@@ -906,8 +1029,8 @@ class WebhookProcessor
         }
 
         Database::query(
-            'INSERT INTO messages (tenant_id, conversation_id, whatsapp_message_id, direction, sender_type, type, content, media_url, media_mime_type, media_filename, status, metadata_json)
-             VALUES (:tid, :cid, :wmid, \'outbound\', \'system\', :typ, :content, :murl, :mime, :fname, \'sent\', :meta)',
+            'INSERT INTO messages (tenant_id, conversation_id, whatsapp_message_id, direction, sender_type, type, content, media_url, media_mime_type, media_filename, media_local_path, media_size_bytes, media_duration_seconds, media_ptt, status, metadata_json)
+             VALUES (:tid, :cid, :wmid, \'outbound\', \'system\', :typ, :content, :murl, :mime, :fname, :mlpath, :msize, :mdur, :mptt, \'sent\', :meta)',
             [
                 ':tid' => $tenantId,
                 ':cid' => $convId,
@@ -917,6 +1040,10 @@ class WebhookProcessor
                 ':murl' => $mediaUrl,
                 ':mime' => $mime,
                 ':fname' => $filename,
+                ':mlpath' => $mediaLocalPathOut,
+                ':msize' => $mediaSizeBytesOut,
+                ':mdur' => $durationSecOut,
+                ':mptt' => $mediaPttOut,
                 ':meta' => json_encode(['raw_event' => $eventName ?: 'messages', 'from_webhook' => true], JSON_UNESCAPED_UNICODE),
             ]
         );

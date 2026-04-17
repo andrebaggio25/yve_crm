@@ -124,7 +124,10 @@ return function (Router $router) {
             $router->get('/by-lead/{lead_id}', 'ChatController@apiByLead', 'api.conversations.by-lead');
             $router->get('/{id}/messages', 'ChatController@apiMessages', 'api.conversations.messages');
             $router->post('/{id}/messages', 'ChatController@apiSend', 'api.conversations.send');
+            $router->post('/{id}/media', 'ChatController@apiSendMedia', 'api.conversations.send-media');
         });
+
+        $router->get('messages/{id}/media', 'MediaController@apiMessageMedia', 'api.messages.media');
 
         $router->group('settings/whatsapp', function ($router) {
             $router->get('/instances', 'WhatsAppInstanceController@apiList', 'api.wa.list');

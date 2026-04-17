@@ -5,7 +5,9 @@ namespace App\Controllers;
 use App\Core\App;
 use App\Core\Request;
 use App\Core\Response;
+use App\Core\TenantContext;
 use App\Services\WhatsApp\ChatService;
+use App\Services\WhatsApp\MediaStorageService;
 
 class ChatController
 {
@@ -65,6 +67,92 @@ class ChatController
         } catch (\Throwable $e) {
             App::logError('Chat send', $e);
             $response->jsonError('Erro ao enviar', 500);
+        }
+    }
+
+    public function apiSendMedia(Request $request, Response $response): void
+    {
+        $id = (int) ($request->getParam('id') ?? 0);
+        if ($id <= 0) {
+            $response->jsonError('ID invalido', 400);
+
+            return;
+        }
+        if (!$request->hasFile('file')) {
+            $response->jsonError('Arquivo obrigatorio', 422);
+
+            return;
+        }
+        $file = $request->file('file');
+        if (!is_array($file) || (int) ($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+            $response->jsonError('Upload invalido', 422);
+
+            return;
+        }
+        $max = (int) App::config('upload_max_size', 10 * 1024 * 1024);
+        if ((int) ($file['size'] ?? 0) > $max) {
+            $response->jsonError('Arquivo muito grande', 422);
+
+            return;
+        }
+        $tmp = (string) ($file['tmp_name'] ?? '');
+        $orig = (string) ($file['name'] ?? 'upload');
+        if ($tmp === '' || !is_uploaded_file($tmp)) {
+            $response->jsonError('Upload invalido', 422);
+
+            return;
+        }
+
+        $mime = 'application/octet-stream';
+        if (function_exists('finfo_open')) {
+            $f = finfo_open(FILEINFO_MIME_TYPE);
+            if ($f !== false) {
+                $detected = finfo_file($f, $tmp);
+                finfo_close($f);
+                if (is_string($detected) && $detected !== '') {
+                    $mime = $detected;
+                }
+            }
+        }
+        if (!MediaStorageService::mimeAllowed($mime)) {
+            $response->jsonError('Tipo de arquivo nao permitido', 422);
+
+            return;
+        }
+
+        $caption = trim((string) $request->post('caption'));
+        $vRaw = strtolower((string) $request->post('is_voice_note'));
+        $isVoice = in_array($vRaw, ['1', 'true', 'on', 'yes'], true);
+
+        $bytes = file_get_contents($tmp);
+        if ($bytes === false || $bytes === '') {
+            $response->jsonError('Falha ao ler upload', 500);
+
+            return;
+        }
+
+        $tid = (int) TenantContext::getEffectiveTenantId();
+        try {
+            $stored = MediaStorageService::store($tid, 'outbound', $bytes, $mime, $orig);
+        } catch (\Throwable $e) {
+            App::logError('MediaStorageService upload', $e);
+            $response->jsonError($e->getMessage(), 422);
+
+            return;
+        }
+
+        try {
+            $svc = new ChatService();
+            $out = $svc->sendMediaFromUpload($id, $stored['relative_path'], $caption, $isVoice, $mime, $orig);
+            if (!$out['ok']) {
+                $response->jsonError($out['message'] ?? 'Erro ao enviar', 422);
+
+                return;
+            }
+            $response->jsonSuccess($out, 'Enviado');
+        } catch (\Throwable $e) {
+            App::logError('Chat send media', $e);
+            $response->jsonError('Erro ao enviar midia', 500);
         }
     }
 

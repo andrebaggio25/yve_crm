@@ -34,12 +34,38 @@ $pageTitle = 'Inbox WhatsApp';
             <p class="text-center text-sm text-slate-500">Escolha um lead na lista</p>
         </div>
         <footer class="border-t border-slate-200 bg-white p-3">
-            <form id="inbox-composer" class="flex gap-2">
-                <textarea id="inbox-text" rows="2" class="min-w-0 flex-1 resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20" placeholder="Mensagem..." disabled></textarea>
-                <button type="submit" class="shrink-0 self-end rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 disabled:opacity-50" disabled id="inbox-send">Enviar</button>
+            <input type="file" id="inbox-file" class="hidden" accept="image/*,audio/*,video/*,.pdf,.doc,.docx,application/pdf" />
+            <form id="inbox-composer" class="flex flex-col gap-2 sm:flex-row sm:items-end">
+                <div class="flex min-w-0 flex-1 items-end gap-1.5">
+                    <button type="button" id="inbox-attach" title="Anexar arquivo" aria-label="Anexar arquivo" class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50 disabled:opacity-50" disabled>
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-5 w-5"><path fill-rule="evenodd" d="M18.97 3.659a2.25 2.25 0 0 0-3.182 0l-10.94 10.94a4.5 4.5 0 0 0 6.364 6.364l7.5-7.5a.75.75 0 1 0-1.06-1.06l-7.5 7.5a3 3 0 1 1-4.243-4.243l10.939-10.94a.75.75 0 0 1 1.061 0l3.182 3.182a.75.75 0 0 1-1.06 1.061l-10.94 10.94a1.5 1.5 0 0 0 2.122 2.122l7.5-7.5a.75.75 0 1 0-1.06-1.06l-7.5 7.5a.75.75 0 0 1-1.061 0Z" clip-rule="evenodd" /></svg>
+                    </button>
+                    <button type="button" id="inbox-mic" title="Gravar audio" aria-label="Gravar audio" class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50 disabled:opacity-50" disabled>
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-5 w-5"><path d="M8.25 4.5a3.75 3.75 0 1 1 7.5 0v6a3.75 3.75 0 1 1-7.5 0v-6ZM15 10.5a3 3 0 1 1-6 0v-6a3 3 0 0 1 6 0v6Z" /><path d="M3.75 10.5a.75.75 0 0 0 0 1.5h1.37a6.75 6.75 0 0 0 12.76 0h1.37a.75.75 0 0 0 0-1.5h-1.37a6.75 6.75 0 0 0-12.76 0H3.75Z" /></svg>
+                    </button>
+                    <textarea id="inbox-text" rows="2" class="min-h-[44px] min-w-0 flex-1 resize-none rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20" placeholder="Mensagem..." disabled></textarea>
+                </div>
+                <button type="submit" class="h-11 shrink-0 rounded-xl bg-primary-600 px-5 text-sm font-medium text-white shadow-sm hover:bg-primary-700 disabled:opacity-50 sm:self-end" disabled id="inbox-send">Enviar</button>
             </form>
         </footer>
     </section>
 </div>
 
-<?php $scripts = ['inbox']; ?>
+<div id="inbox-media-modal" class="fixed inset-0 z-50 hidden items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" aria-hidden="true" role="dialog" aria-labelledby="inbox-media-modal-title">
+    <div class="flex max-h-[100dvh] w-full max-w-md flex-col rounded-t-2xl bg-white shadow-xl sm:max-h-[90vh] sm:rounded-2xl">
+        <div class="border-b border-slate-100 px-4 py-3">
+            <h3 id="inbox-media-modal-title" class="text-sm font-semibold text-slate-900">Enviar midia</h3>
+        </div>
+        <div class="min-h-0 flex-1 overflow-y-auto p-4">
+            <div id="inbox-media-preview" class="mb-3 min-h-[100px] rounded-xl bg-slate-50"></div>
+            <label for="inbox-media-caption" class="mb-1 block text-xs font-medium text-slate-500">Legenda (opcional)</label>
+            <textarea id="inbox-media-caption" rows="2" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20"></textarea>
+        </div>
+        <div class="flex justify-end gap-2 border-t border-slate-100 p-4">
+            <button type="button" id="inbox-media-cancel" class="h-11 rounded-xl border border-slate-200 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancelar</button>
+            <button type="button" id="inbox-media-confirm" class="h-11 rounded-xl bg-primary-600 px-4 text-sm font-medium text-white hover:bg-primary-700">Enviar</button>
+        </div>
+    </div>
+</div>
+
+<?php $scripts = ['wavesurfer.min', 'audio-player', 'inbox']; ?>

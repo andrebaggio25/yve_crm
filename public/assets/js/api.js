@@ -74,6 +74,30 @@ const API = {
         return this.request(url, { method: 'POST', body: data });
     },
 
+    /**
+     * POST multipart (nao definir Content-Type — o browser envia boundary).
+     */
+    async postForm(url, formData) {
+        const csrf = this.getCsrfToken();
+        const response = await fetch(this.baseUrl + url, {
+            method: 'POST',
+            headers: {
+                Accept: 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRF-Token': csrf,
+            },
+            body: formData,
+        });
+        const text = await response.text();
+        const data = this.parseResponseBody(text, response.status);
+        if (!response.ok) {
+            const err = new Error(data.message || `HTTP ${response.status}`);
+            err.data = data;
+            throw err;
+        }
+        return data;
+    },
+
     put(url, data = {}) {
         return this.request(url, { method: 'PUT', body: data });
     },
