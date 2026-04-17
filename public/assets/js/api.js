@@ -298,6 +298,9 @@ const API = {
         metrics(params = {}) {
             const query = new URLSearchParams(params).toString();
             return API.get('/api/dashboard/metrics?' + query);
+        },
+        teamUsers() {
+            return API.get('/api/dashboard/team-users');
         }
     },
 

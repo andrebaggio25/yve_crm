@@ -117,6 +117,7 @@ return function (Router $router) {
 
         $router->group('dashboard', function ($router) {
             $router->get('/metrics', 'DashboardController@apiMetrics', 'api.dashboard.metrics');
+            $router->get('/team-users', 'DashboardController@apiTeamUsers', 'api.dashboard.team-users');
         });
 
         $router->group('conversations', function ($router) {
