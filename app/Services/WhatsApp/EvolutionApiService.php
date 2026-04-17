@@ -148,7 +148,7 @@ class EvolutionApiService
     }
 
     /**
-     * Envia audio como nota de voz (PTT). Evolution 2.x aceita data URI + encoding (doc oficial).
+     * Envia audio como nota de voz (PTT). Evolution 2.x aceita base64 puro (sem data URI).
      *
      * @return array{ok:bool,http:int,body:mixed,raw:string}
      */
@@ -162,15 +162,15 @@ class EvolutionApiService
     ): array {
         $baseUrl = rtrim($baseUrl, '/');
         $url = $baseUrl . '/message/sendWhatsAppAudio/' . rawurlencode($instanceName);
-        $mt = $mimeType !== '' ? strtolower($mimeType) : 'audio/webm';
+        // Evolution espera base64 puro, sem prefixo data URI
+        $audioClean = $audioBase64;
         if (str_starts_with($audioBase64, 'data:')) {
-            $audioField = $audioBase64;
-        } else {
-            $audioField = 'data:' . $mt . ';base64,' . $audioBase64;
+            $parts = explode(',', $audioBase64, 2);
+            $audioClean = $parts[1] ?? $audioBase64;
         }
         $payload = json_encode([
             'number' => $number,
-            'audio' => $audioField,
+            'audio' => $audioClean,
             'encoding' => true,
         ], JSON_UNESCAPED_UNICODE);
 

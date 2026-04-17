@@ -70,20 +70,22 @@ $pageTitle = 'Inbox WhatsApp';
     </section>
 </div>
 
-<div id="inbox-media-modal" class="fixed inset-0 z-50 hidden items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4" aria-hidden="true" role="dialog" aria-labelledby="inbox-media-modal-title">
-    <div class="flex max-h-[100dvh] w-full max-w-md flex-col rounded-t-3xl bg-[#f0f2f5] shadow-2xl sm:max-h-[90vh] sm:rounded-3xl">
-        <div class="flex items-center justify-between border-b border-slate-200/80 bg-white px-4 py-3 sm:rounded-t-3xl">
-            <h3 id="inbox-media-modal-title" class="text-base font-semibold text-slate-900">Enviar</h3>
-            <button type="button" id="inbox-media-dismiss" class="rounded-full p-2 text-slate-500 hover:bg-slate-100" aria-label="Fechar">&times;</button>
-        </div>
-        <div class="min-h-0 flex-1 overflow-y-auto p-4">
-            <div id="inbox-media-preview" class="mb-4 overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/80"></div>
-            <label for="inbox-media-caption" class="mb-1.5 block text-xs font-medium text-slate-600">Legenda</label>
-            <textarea id="inbox-media-caption" rows="2" class="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20" placeholder="Adicione uma legenda..."></textarea>
-        </div>
-        <div class="flex justify-end gap-3 border-t border-slate-200/80 bg-white p-4 sm:rounded-b-3xl">
-            <button type="button" id="inbox-media-cancel" class="h-12 rounded-full px-6 text-sm font-semibold text-slate-700 hover:bg-slate-100">Cancelar</button>
-            <button type="button" id="inbox-media-confirm" class="h-12 min-w-[120px] rounded-full bg-primary-600 px-6 text-sm font-semibold text-white shadow-md hover:bg-primary-700">Enviar</button>
+<div id="inbox-media-modal" class="fixed inset-0 z-50 hidden bg-black/60 backdrop-blur-sm" aria-hidden="true" role="dialog" aria-labelledby="inbox-media-modal-title">
+    <div class="flex h-full w-full items-end justify-center p-0 sm:items-center sm:p-4">
+        <div class="flex max-h-[90dvh] w-full max-w-md flex-col rounded-t-3xl bg-white shadow-2xl sm:max-h-[85vh] sm:rounded-3xl">
+            <div class="flex items-center justify-between border-b border-slate-100 bg-white px-4 py-3 sm:rounded-t-3xl">
+                <h3 id="inbox-media-modal-title" class="text-base font-semibold text-slate-900">Enviar</h3>
+                <button type="button" id="inbox-media-dismiss" class="flex h-8 w-8 items-center justify-center rounded-full text-xl text-slate-500 hover:bg-slate-100" aria-label="Fechar">&times;</button>
+            </div>
+            <div class="min-h-0 flex-1 overflow-y-auto bg-slate-50/50 p-4">
+                <div id="inbox-media-preview" class="mb-4 overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200"></div>
+                <label for="inbox-media-caption" class="mb-1.5 block text-xs font-medium text-slate-600">Legenda (opcional)</label>
+                <textarea id="inbox-media-caption" rows="2" class="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20" placeholder="Adicione uma legenda..."></textarea>
+            </div>
+            <div class="flex justify-end gap-3 border-t border-slate-100 bg-white p-4 sm:rounded-b-3xl">
+                <button type="button" id="inbox-media-cancel" class="h-11 rounded-full px-5 text-sm font-semibold text-slate-700 hover:bg-slate-100">Cancelar</button>
+                <button type="button" id="inbox-media-confirm" class="h-11 min-w-[100px] rounded-full bg-primary-600 px-5 text-sm font-semibold text-white shadow-md hover:bg-primary-700">Enviar</button>
+            </div>
         </div>
     </div>
 </div>

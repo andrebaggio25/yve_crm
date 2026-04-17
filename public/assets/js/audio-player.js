@@ -20,6 +20,7 @@
         mountAll(root) {
             const el = root || document;
             if (typeof global.WaveSurfer === 'undefined') {
+                console.warn('[AudioPlayer] WaveSurfer nao carregado');
                 return;
             }
             el.querySelectorAll('[data-inbox-audio]:not([data-inbox-audio-mounted])').forEach((wrap) => {
@@ -31,6 +32,7 @@
         mountOne(wrap) {
             const src = wrap.getAttribute('data-audio-src');
             if (!src || typeof global.WaveSurfer === 'undefined') {
+                console.warn('[AudioPlayer] sem src ou WaveSurfer');
                 return;
             }
             const out = wrap.classList.contains('inbox-audio-out');
@@ -39,6 +41,7 @@
             const timeEl = wrap.querySelector('[data-time]');
             const rateBtn = wrap.querySelector('[data-rate]');
             if (!wfEl || !playBtn) {
+                console.warn('[AudioPlayer] elementos nao encontrados');
                 return;
             }
 
@@ -46,28 +49,38 @@
             const progColor = out ? '#ffffff' : '#0d9488';
 
             let speedIdx = 0;
-            const ws = global.WaveSurfer.create({
-                container: wfEl,
-                waveColor: waveColor,
-                progressColor: progColor,
-                cursorColor: progColor,
-                barWidth: 2,
-                barRadius: 2,
-                height: 32,
-                normalize: true,
-                url: src,
-            });
-            instances.set(wrap, ws);
+            let ws;
+            try {
+                ws = global.WaveSurfer.create({
+                    container: wfEl,
+                    waveColor: waveColor,
+                    progressColor: progColor,
+                    cursorColor: progColor,
+                    barWidth: 2,
+                    barRadius: 2,
+                    height: 32,
+                    normalize: true,
+                    url: src,
+                });
+                instances.set(wrap, ws);
+            } catch (e) {
+                console.error('[AudioPlayer] erro ao criar WaveSurfer', e);
+                this.fallbackAudio(wrap, src, out);
+                return;
+            }
 
             ws.on('ready', () => {
                 if (timeEl) {
                     timeEl.textContent = formatTime(ws.getDuration());
                 }
             });
+            ws.on('error', (err) => {
+                console.error('[AudioPlayer] erro ao carregar audio', src, err);
+                this.fallbackAudio(wrap, src, out);
+            });
             ws.on('audioprocess', () => {
                 if (timeEl) {
-                    timeEl.textContent =
-                        formatTime(ws.getCurrentTime()) + ' / ' + formatTime(ws.getDuration());
+                    timeEl.textContent = formatTime(ws.getCurrentTime()) + ' / ' + formatTime(ws.getDuration());
                 }
             });
             ws.on('play', () => {
@@ -92,6 +105,12 @@
                     rateBtn.textContent = r + '×';
                 });
             }
+        },
+
+        fallbackAudio(wrap, src, out) {
+            // Se WaveSurfer falhar, substitui por audio nativo
+            wrap.innerHTML = `<audio controls class="h-8 w-full" preload="metadata" src="${src}"></audio>`;
+            wrap.style.maxWidth = '260px';
         },
 
         destroyIn(root) {

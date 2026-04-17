@@ -265,9 +265,10 @@ const Inbox = {
         const isHttp = /^https?:\/\//i.test(url);
 
         if (type === 'image' || type === 'sticker') {
+            // Limita imagens a max 280px de altura para nao ficarem gigantes
             const cls = type === 'sticker'
-                ? 'max-h-36 w-auto max-w-[200px] cursor-pointer rounded-lg object-contain'
-                : 'max-h-56 max-w-full cursor-pointer rounded-lg object-cover';
+                ? 'h-auto max-h-32 w-auto max-w-[180px] cursor-pointer rounded-lg object-contain'
+                : 'h-auto max-h-[280px] w-auto max-w-full cursor-pointer rounded-lg object-cover';
             const safe = this.escape(url);
             return `<div class="${topPad} overflow-hidden rounded-lg">
                 <img src="${safe}" alt="" loading="lazy" class="${cls}" data-inbox-lightbox="${safe}" referrerpolicy="no-referrer" />
@@ -283,32 +284,37 @@ const Inbox = {
 
         if (type === 'audio') {
             const ptt = Number(m.media_ptt) === 1;
-            const pttInline = ptt
-                ? `<span class="shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${out ? 'bg-white/25 text-white' : 'bg-primary-100 text-primary-800'}">voz</span>`
+            const pttBadge = ptt
+                ? `<span class="shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${out ? 'bg-white/30 text-white' : 'bg-primary-100 text-primary-700'}">voz</span>`
                 : '';
-            if (isApi && typeof window.WaveSurfer !== 'undefined') {
-                const outCls = out ? 'inbox-audio-out' : '';
-                const border = out ? 'border-white/20 bg-black/10' : 'border-slate-200 bg-white';
-                const pad = compact ? 'px-2 py-1.5' : 'px-2 py-2';
-                return `<div class="inbox-audio-player ${topPad} max-w-[min(100%,260px)] rounded-full border ${border} ${pad} ${outCls}" data-inbox-audio data-audio-src="${this.escape(url)}">
-                    <div class="flex items-center gap-1.5">
-                        <button type="button" data-play class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${out ? 'bg-white text-primary-600' : 'bg-primary-600 text-white'} text-xs shadow-sm">▶</button>
-                        <div class="min-h-[32px] min-w-0 flex-1" data-waveform></div>
-                        ${pttInline}
-                        <span data-time class="shrink-0 font-mono text-[10px] tabular-nums opacity-90">0:00</span>
-                        <button type="button" data-rate class="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${out ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-800'}">1×</button>
-                    </div>
-                </div>`;
-            }
-            return `<div class="${topPad} flex max-w-[260px] items-center gap-2">${pttInline}<audio controls class="h-8 min-w-0 flex-1" preload="metadata" src="${this.escape(url)}"></audio></div>`;
+            // Sempre tenta usar WaveSurfer primeiro, com fallback automatico
+            const outCls = out ? 'inbox-audio-out' : '';
+            const border = out ? 'border-white/30 bg-black/20' : 'border-slate-200 bg-white';
+            const pad = compact ? 'px-2 py-1' : 'px-2 py-1.5';
+            return `<div class="inbox-audio-player ${topPad} w-full max-w-[260px] rounded-full border ${border} ${pad} ${outCls}" data-inbox-audio data-audio-src="${this.escape(url)}">
+                <div class="flex items-center gap-2">
+                    <button type="button" data-play class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${out ? 'bg-white text-primary-600' : 'bg-primary-600 text-white'} text-[10px] shadow-sm">▶</button>
+                    <div class="min-h-[28px] min-w-0 flex-1" data-waveform></div>
+                    ${pttBadge}
+                    <span data-time class="shrink-0 font-mono text-[10px] tabular-nums opacity-90">0:00</span>
+                    <button type="button" data-rate class="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${out ? 'bg-white/25 text-white' : 'bg-slate-100 text-slate-700'}">1×</button>
+                </div>
+            </div>`;
         }
 
         if (type === 'document') {
             const name = m.media_filename ? String(m.media_filename) : 'Documento';
             const sz = this.formatBytes(m.media_size_bytes);
             const meta = sz ? `<span class="text-[10px] opacity-80">${this.escape(sz)}</span>` : '';
-            return `<a href="${this.escape(url)}" target="_blank" rel="noopener noreferrer" class="${topPad} flex max-w-full items-center gap-2 rounded-xl border ${out ? 'border-white/30 bg-white text-slate-900' : 'border-slate-200 bg-white text-slate-900'} px-3 py-2 text-left text-xs shadow-sm ring-1 ring-black/5">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-8 w-8 shrink-0 text-primary-600 opacity-90"><path fill-rule="evenodd" d="M5.625 1.5c-1.036 0-1.875.84-1.875 1.875v17.25c0 1.035.84 1.875 1.875 1.875h12.75c1.035 0 1.875-.84 1.875-1.875V12.75A3.75 3.75 0 0 0 16.5 9h-1.875a1.875 1.875 0 0 1-1.875-1.875V5.25A3.75 3.75 0 0 0 9 1.5H5.625ZM7.5 15a.75.75 0 0 1 .75-.75h7.5a.75.75 0 0 1 0 1.5h-7.5A.75.75 0 0 1 7.5 15Zm.75 2.25a.75.75 0 0 0 0 1.5H12a.75.75 0 0 0 0-1.5H8.25Z" clip-rule="evenodd" /><path d="M14.25 5.25a3 3 0 0 0 3 3h3.75a3 3 0 0 0-3-3h-3.75Z" /></svg>
+            // SVG simples de documento
+            const iconSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-8 w-8 shrink-0 text-primary-600">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke-linecap="round" stroke-linejoin="round"/>
+                <polyline points="14 2 14 8 20 8" stroke-linecap="round" stroke-linejoin="round"/>
+                <line x1="16" y1="13" x2="8" y2="13" stroke-linecap="round" stroke-linejoin="round"/>
+                <line x1="16" y1="17" x2="8" y2="17" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>`;
+            return `<a href="${this.escape(url)}" target="_blank" rel="noopener noreferrer" class="${topPad} flex max-w-[260px] items-center gap-2 rounded-xl border ${out ? 'border-white/40 bg-white/95 text-slate-900' : 'border-slate-200 bg-white text-slate-900'} px-3 py-2 text-left text-xs shadow-sm">
+                ${iconSvg}
                 <span class="min-w-0 flex-1 truncate font-medium">${this.escape(name)}</span>
                 ${meta}
             </a>`;
@@ -334,14 +340,17 @@ const Inbox = {
         if (this.state.lightboxEl) return;
         const wrap = document.createElement('div');
         wrap.id = 'inbox-lightbox';
-        wrap.className = 'fixed inset-0 z-[70] hidden items-center justify-center bg-black/92 p-4';
-        wrap.innerHTML = '<button type="button" class="absolute right-3 top-3 rounded-full bg-white/10 p-2 text-white hover:bg-white/20" aria-label="Fechar">&times;</button><img alt="" class="max-h-full max-w-full object-contain" />';
+        wrap.className = 'fixed inset-0 z-[70] hidden items-center justify-center bg-black/95 p-4 backdrop-blur-sm';
+        wrap.innerHTML = `
+            <button type="button" class="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/20 text-2xl text-white hover:bg-white/30" aria-label="Fechar">&times;</button>
+            <img alt="" class="max-h-[90vh] max-w-[90vw] cursor-zoom-out rounded-lg object-contain shadow-2xl" />
+        `;
         document.body.appendChild(wrap);
         this.state.lightboxEl = wrap;
         this.state.lightboxImg = wrap.querySelector('img');
         this.state.lightboxClose = wrap.querySelector('button');
         wrap.addEventListener('click', (e) => {
-            if (e.target === wrap || e.target === this.state.lightboxClose) {
+            if (e.target === wrap || e.target === this.state.lightboxClose || e.target === this.state.lightboxImg) {
                 this.closeLightbox();
             }
         });
