@@ -23,7 +23,11 @@ class DashboardController
             $this->computeMetrics($request, $response);
         } catch (\Throwable $e) {
             App::logError('Dashboard apiMetrics', $e);
-            $response->jsonError('Erro ao calcular metricas do dashboard', 500);
+            $msg = 'Erro ao calcular metricas do dashboard';
+            if (App::config('debug')) {
+                $msg .= ': ' . $e->getMessage();
+            }
+            $response->jsonError($msg, 500);
         }
     }
 
@@ -61,12 +65,14 @@ class DashboardController
         )['total'] ?? 0;
 
         $leadsByStage = TenantAwareDatabase::fetchAll(
-            "SELECT COALESCE(ps.name, 'Sem etapa') as stage_name, COUNT(l.id) as total, SUM(l.value) as value
+            "SELECT COALESCE(MAX(ps.name), 'Sem etapa') AS stage_name,
+                    COUNT(l.id) AS total,
+                    SUM(l.value) AS value
              FROM leads l
-             LEFT JOIN pipeline_stages ps ON l.stage_id = ps.id AND ps.tenant_id = l.tenant_id
+             LEFT JOIN pipeline_stages ps ON l.stage_id = ps.id AND ps.pipeline_id = l.pipeline_id
              WHERE {$whereSql}
-             GROUP BY ps.id, ps.name, ps.position
-             ORDER BY COALESCE(ps.position, 999), ps.name",
+             GROUP BY ps.id
+             ORDER BY COALESCE(MIN(ps.position), 999) ASC, stage_name ASC",
             $params
         );
 
@@ -127,24 +133,31 @@ class DashboardController
             }
         }
 
-        $convOpen = TenantAwareDatabase::fetch(
-            'SELECT COUNT(*) as c FROM conversations WHERE tenant_id = :tenant_id AND status <> \'closed\'',
-            [':tenant_id' => $tenantId]
-        )['c'] ?? 0;
+        $convOpen = 0;
+        $waUnread = 0;
+        $msgCounts = ['inbound' => 0, 'outbound' => 0];
+        try {
+            $convOpen = (int) (TenantAwareDatabase::fetch(
+                "SELECT COUNT(*) as c FROM conversations WHERE tenant_id = :tenant_id AND status IN ('open', 'pending')",
+                [':tenant_id' => $tenantId]
+            )['c'] ?? 0);
 
-        $waUnread = TenantAwareDatabase::fetch(
-            'SELECT COALESCE(SUM(unread_count), 0) as s FROM conversations WHERE tenant_id = :tenant_id AND status <> \'closed\'',
-            [':tenant_id' => $tenantId]
-        )['s'] ?? 0;
+            $waUnread = (int) (TenantAwareDatabase::fetch(
+                "SELECT COALESCE(SUM(unread_count), 0) as s FROM conversations WHERE tenant_id = :tenant_id AND status IN ('open', 'pending')",
+                [':tenant_id' => $tenantId]
+            )['s'] ?? 0);
 
-        $msgCounts = TenantAwareDatabase::fetch(
-            "SELECT
-                SUM(CASE WHEN direction = 'inbound' THEN 1 ELSE 0 END) as inbound,
-                SUM(CASE WHEN direction = 'outbound' THEN 1 ELSE 0 END) as outbound
-             FROM messages
-             WHERE tenant_id = :tenant_id AND created_at >= :date_from",
-            [':tenant_id' => $tenantId, ':date_from' => $dateFrom]
-        );
+            $msgCounts = TenantAwareDatabase::fetch(
+                "SELECT
+                    SUM(CASE WHEN direction = 'inbound' THEN 1 ELSE 0 END) as inbound,
+                    SUM(CASE WHEN direction = 'outbound' THEN 1 ELSE 0 END) as outbound
+                 FROM messages
+                 WHERE tenant_id = :tenant_id AND created_at >= :date_from",
+                [':tenant_id' => $tenantId, ':date_from' => $dateFrom]
+            ) ?: $msgCounts;
+        } catch (\Throwable $e) {
+            App::logError('Dashboard metricas WhatsApp (conversations/messages)', $e);
+        }
 
         $leadsByDay = TenantAwareDatabase::fetchAll(
             "SELECT DATE(l.created_at) as d, COUNT(l.id) as c
@@ -170,18 +183,23 @@ class DashboardController
             ];
         }
 
-        $recentEvents = TenantAwareDatabase::fetchAll(
-            "SELECT e.id, e.lead_id, e.event_type, e.description, e.created_at,
-                    l.name AS lead_name,
-                    u.name AS user_name
-             FROM lead_events e
-             INNER JOIN leads l ON l.id = e.lead_id AND l.deleted_at IS NULL AND l.tenant_id = :tenant_id
-             LEFT JOIN users u ON u.id = e.user_id
-             WHERE {$whereSql}
-             ORDER BY e.created_at DESC
-             LIMIT 20",
-            $params
-        );
+        $recentEvents = [];
+        try {
+            $recentEvents = TenantAwareDatabase::fetchAll(
+                "SELECT e.id, e.lead_id, e.event_type, e.description, e.created_at,
+                        l.name AS lead_name,
+                        u.name AS user_name
+                 FROM lead_events e
+                 INNER JOIN leads l ON l.id = e.lead_id AND l.deleted_at IS NULL AND l.tenant_id = :tenant_id
+                 LEFT JOIN users u ON u.id = e.user_id
+                 WHERE {$whereSql}
+                 ORDER BY e.created_at DESC
+                 LIMIT 20",
+                $params
+            );
+        } catch (\Throwable $e) {
+            App::logError('Dashboard recent_events', $e);
+        }
 
         $response->jsonSuccess([
             'period_days' => $period,
