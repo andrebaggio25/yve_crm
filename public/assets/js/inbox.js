@@ -201,28 +201,30 @@ const Inbox = {
         }
 
         if (!items.length) {
-            el.innerHTML = '<p class="p-4 text-center text-sm text-slate-500">Nenhuma conversa</p>';
+            el.innerHTML = '<p class="p-6 text-center text-sm text-slate-500">Nenhuma conversa por aqui.<br/><span class="text-xs text-slate-400">Ajuste o filtro ou aguarde novos leads.</span></p>';
             return;
         }
 
         el.innerHTML = items
             .map((c) => {
-                const active = c.id === this.state.activeId ? 'bg-primary-50 ring-1 ring-primary-200' : 'hover:bg-slate-50';
+                const active = c.id === this.state.activeId
+                    ? 'bg-primary-50/90 ring-1 ring-primary-200/80'
+                    : 'hover:bg-[#f5f6f6] active:bg-[#ebebeb]';
                 const name = this.displayName(c);
                 const prev = (c.last_message_preview || '').replace(/\s+/g, ' ').trim();
                 const unread = c.unread_count > 0
-                    ? `<span class="ml-auto min-w-[20px] rounded-full bg-primary-600 px-1.5 py-[2px] text-center text-[10px] font-semibold text-white">${c.unread_count}</span>`
+                    ? `<span class="ml-auto min-w-[22px] rounded-full bg-primary-600 px-1.5 py-0.5 text-center text-[11px] font-semibold leading-none text-white shadow-sm">${c.unread_count}</span>`
                     : '';
                 const time = this.formatTime(c.last_message_at);
-                return `<button type="button" class="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition-colors ${active}" data-cid="${c.id}">
+                return `<button type="button" class="flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-left text-sm transition-colors ${active}" data-cid="${c.id}">
                     ${this.avatarHTML(c, 'lg')}
-                    <span class="flex min-w-0 flex-1 flex-col">
-                        <span class="flex items-center gap-2">
-                            <span class="truncate font-medium text-slate-900">${this.escape(name)}</span>
-                            ${time ? `<span class="ml-auto shrink-0 text-[10px] font-normal text-slate-400">${this.escape(time)}</span>` : ''}
+                    <span class="flex min-w-0 flex-1 flex-col gap-0.5">
+                        <span class="flex items-baseline gap-2">
+                            <span class="truncate text-[15px] font-medium text-slate-900">${this.escape(name)}</span>
+                            ${time ? `<span class="ml-auto shrink-0 text-[11px] font-normal tabular-nums text-slate-400">${this.escape(time)}</span>` : ''}
                         </span>
                         <span class="flex items-center gap-2">
-                            <span class="line-clamp-1 flex-1 text-xs text-slate-500">${this.escape(prev) || '—'}</span>
+                            <span class="line-clamp-1 flex-1 text-[13px] text-slate-500">${this.escape(prev) || '—'}</span>
                             ${unread}
                         </span>
                     </span>
@@ -429,7 +431,7 @@ const Inbox = {
             const isNearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 50;
 
             if (!msgs.length) {
-                box.innerHTML = '<p class="text-center text-sm text-slate-500">Sem mensagens</p>';
+                box.innerHTML = '<div class="flex justify-center px-2 pt-6"><p class="max-w-sm rounded-lg bg-white/90 px-4 py-2.5 text-center text-sm text-slate-600 shadow-sm ring-1 ring-slate-200/70 backdrop-blur-sm">Nenhuma mensagem ainda.<br/><span class="text-xs text-slate-400">Envie uma mensagem para iniciar.</span></p></div>';
                 return;
             }
 
@@ -442,19 +444,19 @@ const Inbox = {
                         !text && ['image', 'sticker', 'video', 'audio', 'document'].includes(t);
                     const media = this.renderMediaBlock(m, out, onlyMedia);
                     const bubble = out
-                        ? 'bg-primary-600 text-white rounded-tr-sm'
-                        : 'bg-white text-slate-800 ring-1 ring-slate-200 rounded-tl-sm';
-                    const bubblePad = onlyMedia && t === 'audio' ? 'px-2.5 py-1' : 'px-3 py-2';
+                        ? 'bg-primary-600 text-white rounded-2xl rounded-br-sm inbox-wa-bubble-out'
+                        : 'bg-white text-slate-800 rounded-2xl rounded-bl-sm ring-1 ring-slate-200/90 inbox-wa-bubble-in';
+                    const bubblePad = onlyMedia && t === 'audio' ? 'px-2.5 py-1' : 'px-3 py-1.5';
                     const time = this.formatTime(m.created_at);
-                    const statusDot = out ? `<span class="opacity-70">· ${this.escape(m.status || '')}</span>` : '';
-                    const textHtml = text ? `<div class="whitespace-pre-wrap break-words">${this.escape(text)}</div>` : '';
+                    const statusDot = out ? `<span class="opacity-80">· ${this.escape(m.status || '')}</span>` : '';
+                    const textHtml = text ? `<div class="whitespace-pre-wrap break-words text-[14.5px] leading-snug">${this.escape(text)}</div>` : '';
                     const metaPad = onlyMedia && t === 'audio' ? 'mt-0.5' : 'mt-1';
                     return `<div class="flex ${out ? 'justify-end' : 'justify-start'}">
-                        <div class="max-w-[min(100%,20rem)] rounded-2xl ${bubblePad} text-sm shadow-sm ${bubble}">
+                        <div class="max-w-[min(100%,18.5rem)] ${bubblePad} text-sm ${bubble}">
                             ${textHtml}
                             ${media}
-                            <div class="${metaPad} flex items-center justify-end gap-1 text-[10px] opacity-70">
-                                <span>${this.escape(time)}</span>
+                            <div class="${metaPad} flex items-center justify-end gap-1 text-[11px] opacity-80">
+                                <span class="tabular-nums">${this.escape(time)}</span>
                                 ${statusDot}
                             </div>
                         </div>
@@ -495,39 +497,68 @@ const Inbox = {
         this.state.pendingMedia = { file, isVoice };
         const modal = document.getElementById('inbox-media-modal');
         const title = document.getElementById('inbox-media-modal-title');
+        const fnEl = document.getElementById('inbox-media-filename');
         if (title) {
-            title.textContent = isVoice ? 'Enviar audio' : 'Enviar arquivo';
+            title.textContent = isVoice ? 'Mensagem de voz' : 'Enviar arquivo';
+        }
+        if (fnEl) {
+            const name = file.name || '';
+            if (name && !isVoice) {
+                fnEl.textContent = name;
+                fnEl.classList.remove('hidden');
+            } else {
+                fnEl.textContent = '';
+                fnEl.classList.add('hidden');
+            }
         }
         const prev = document.getElementById('inbox-media-preview');
         const cap = document.getElementById('inbox-media-caption');
         if (cap) cap.value = '';
         if (prev) {
             prev.innerHTML = '';
+            prev.className =
+                'flex min-h-[180px] items-center justify-center overflow-hidden rounded-2xl bg-white/95 p-3 shadow-[inset_0_0_0_1px_rgba(0,0,0,0.06)] ring-1 ring-slate-200/60';
             const type = file.type || '';
             const url = URL.createObjectURL(file);
             if (type.startsWith('image/')) {
                 const img = document.createElement('img');
                 img.src = url;
-                img.className = 'max-h-48 w-full rounded-lg object-contain';
+                img.alt = '';
+                img.className = 'max-h-[min(50vh,280px)] w-full rounded-xl object-contain';
                 img.onload = () => URL.revokeObjectURL(url);
                 prev.appendChild(img);
             } else if (type.startsWith('video/')) {
                 const v = document.createElement('video');
                 v.src = url;
                 v.controls = true;
-                v.className = 'max-h-48 w-full rounded-lg';
+                v.playsInline = true;
+                v.className = 'max-h-[min(50vh,280px)] w-full rounded-xl bg-black';
                 prev.appendChild(v);
             } else if (type.startsWith('audio/')) {
+                const wrap = document.createElement('div');
+                wrap.className = 'flex w-full max-w-sm flex-col items-center gap-4 px-2 py-4';
+                const icon = document.createElement('div');
+                icon.className = 'flex h-16 w-16 items-center justify-center rounded-full bg-primary-100 text-primary-600 shadow-inner ring-4 ring-primary-50';
+                icon.innerHTML =
+                    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-8 w-8"><path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>';
                 const a = document.createElement('audio');
                 a.src = url;
                 a.controls = true;
                 a.className = 'w-full';
-                prev.appendChild(a);
+                wrap.appendChild(icon);
+                wrap.appendChild(a);
+                if (isVoice) {
+                    const hint = document.createElement('p');
+                    hint.className = 'text-center text-xs text-slate-500';
+                    hint.textContent = 'Ouça antes de enviar';
+                    wrap.appendChild(hint);
+                }
+                prev.appendChild(wrap);
             } else {
-                const p = document.createElement('p');
-                p.className = 'text-sm text-slate-600';
-                p.textContent = file.name || 'Arquivo anexado';
-                prev.appendChild(p);
+                const card = document.createElement('div');
+                card.className = 'flex w-full max-w-sm items-center gap-3 rounded-xl bg-slate-50 px-4 py-3 ring-1 ring-slate-200/80';
+                card.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-10 w-10 shrink-0 text-primary-600"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><div class="min-w-0 flex-1"><p class="truncate text-sm font-medium text-slate-900">${this.escape(file.name || 'Arquivo')}</p><p class="text-xs text-slate-500">${this.escape(this.formatBytes(file.size))}</p></div>`;
+                prev.appendChild(card);
                 URL.revokeObjectURL(url);
             }
         }
@@ -542,7 +573,12 @@ const Inbox = {
         this.state.pendingMedia = null;
         const modal = document.getElementById('inbox-media-modal');
         const prev = document.getElementById('inbox-media-preview');
+        const fnEl = document.getElementById('inbox-media-filename');
         if (prev) prev.innerHTML = '';
+        if (fnEl) {
+            fnEl.textContent = '';
+            fnEl.classList.add('hidden');
+        }
         if (modal) {
             modal.classList.add('hidden');
             modal.classList.remove('flex');

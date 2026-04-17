@@ -101,4 +101,24 @@
   .peer:checked ~ .peer-checked\:after\:translate-x-5::after {
     transform: translateX(1.25rem);
   }
+
+  /**
+   * Inbox WhatsApp — fundo e sombras (components.css nao e carregado no layout)
+   */
+  .inbox-wa-chat-bg {
+    background-color: #e5ddd5;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='260' viewBox='0 0 260 260'%3E%3Cg fill='%23000' fill-opacity='0.04'%3E%3Cpath d='M0 0h130v130H0zM130 130h130v130H130z'/%3E%3C/g%3E%3C/svg%3E");
+  }
+
+  .inbox-wa-bubble-out {
+    box-shadow: 0 1px 0.5px rgba(0, 0, 0, 0.13);
+  }
+
+  .inbox-wa-bubble-in {
+    box-shadow: 0 1px 0.5px rgba(0, 0, 0, 0.08);
+  }
+
+  .inbox-media-modal-panel {
+    box-shadow: 0 12px 40px rgba(11, 20, 26, 0.35);
+  }
 }
