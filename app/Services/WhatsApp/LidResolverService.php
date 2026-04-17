@@ -182,11 +182,30 @@ class LidResolverService
         $jid = isset($row['jid']) ? (string) $row['jid'] : '';
         $num = isset($row['number']) ? (string) $row['number'] : $digits;
         $explicitLid = '';
-        foreach (['lid', 'lidJid', 'linkedId'] as $field) {
+        foreach (['lid', 'lidJid', 'lidJidAlt', 'linkedId'] as $field) {
             $candidate = isset($row[$field]) ? (string) $row[$field] : '';
             if ($candidate !== '' && str_ends_with($candidate, '@lid')) {
                 $explicitLid = $candidate;
                 break;
+            }
+        }
+
+        // Fallback: se checkWhatsappNumbers nao trouxe LID explicito, tentar findChats.
+        // Algumas versoes do Baileys expoem o par (jid, lid) apenas na listagem de chats.
+        if ($explicitLid === '' && $exists && $jid !== '') {
+            $chatsRes = $evo->findChats(
+                (string) $inst['api_url'],
+                (string) $inst['api_key'],
+                (string) $inst['instance_name']
+            );
+            $phoneDigitsForChat = preg_replace('/\D/', '', $num) ?: $digits;
+            $discoveredLid = EvolutionApiService::extractLidForPhoneFromChats(
+                $chatsRes['body'] ?? null,
+                $phoneDigitsForChat,
+                $jid
+            );
+            if ($discoveredLid !== '') {
+                $explicitLid = $discoveredLid;
             }
         }
 

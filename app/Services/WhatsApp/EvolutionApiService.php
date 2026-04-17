@@ -292,7 +292,7 @@ class EvolutionApiService
             if (!is_array($item)) {
                 continue;
             }
-            foreach (['lid', 'lidJid', 'linkedId'] as $field) {
+            foreach (['lid', 'lidJid', 'lidJidAlt', 'linkedId'] as $field) {
                 $val = isset($item[$field]) ? (string) $item[$field] : '';
                 if ($val !== '' && str_ends_with($val, '@lid')) {
                     return $val;
@@ -302,6 +302,69 @@ class EvolutionApiService
                 $val = isset($item[$field]) ? (string) $item[$field] : '';
                 if ($val !== '' && str_ends_with($val, '@lid')) {
                     return $val;
+                }
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * Busca lista de chats da instancia. Endpoint usado para tentar obter o par
+     * (telefone, LID) quando findContacts e whatsappNumbers falham silenciosamente.
+     *
+     * @return array{ok:bool,http:int,body:mixed,raw:string}
+     */
+    public function findChats(string $baseUrl, string $apiKey, string $instanceName): array
+    {
+        $baseUrl = rtrim($baseUrl, '/');
+        $url = $baseUrl . '/chat/findChats/' . rawurlencode($instanceName);
+        $payload = json_encode(new \stdClass());
+
+        return $this->request('POST', $url, $apiKey, $payload);
+    }
+
+    /**
+     * Extrai o LID (@lid) de um chat correspondente ao telefone informado.
+     * Percorre a lista de chats retornada por findChats e procura por jid
+     * que termine em @s.whatsapp.net ou @c.us cujos digitos batem com $phoneDigits.
+     *
+     * @param mixed  $body        corpo ja decodificado da resposta do findChats
+     * @param string $phoneDigits digitos do telefone (com DDI, ex: 5541987282430)
+     * @param string|null $phoneJid JID completo opcional para comparacao exata
+     */
+    public static function extractLidForPhoneFromChats(mixed $body, string $phoneDigits, ?string $phoneJid = null): string
+    {
+        if (!is_array($body)) {
+            return '';
+        }
+        $list = isset($body[0]) ? $body : ($body['chats'] ?? [$body]);
+        $phoneDigits = preg_replace('/\D/', '', $phoneDigits) ?: '';
+        if ($phoneDigits === '') {
+            return '';
+        }
+
+        foreach ($list as $ct) {
+            if (!is_array($ct)) {
+                continue;
+            }
+            $id = (string) ($ct['id'] ?? $ct['jid'] ?? $ct['remoteJid'] ?? '');
+            $idDigits = preg_replace('/\D/', '', explode('@', $id)[0] ?? '') ?: '';
+
+            $matchesPhone = $id !== '' && (
+                ($phoneJid !== null && $phoneJid !== '' && $id === $phoneJid)
+                || (str_ends_with($id, '@s.whatsapp.net') && $idDigits === $phoneDigits)
+                || (str_ends_with($id, '@c.us') && $idDigits === $phoneDigits)
+            );
+
+            if (!$matchesPhone) {
+                continue;
+            }
+
+            foreach (['lid', 'lidJid', 'lidJidAlt', 'linkedId'] as $field) {
+                $lid = (string) ($ct[$field] ?? '');
+                if ($lid !== '' && str_ends_with($lid, '@lid')) {
+                    return $lid;
                 }
             }
         }

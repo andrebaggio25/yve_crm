@@ -651,6 +651,26 @@ class ChatService
                 }
             }
 
+            // 3o fallback: findChats — em algumas versoes do Baileys o par (jid, lid)
+            // so aparece na listagem de chats. Tentamos silenciosamente.
+            if ($discoveredLid === '') {
+                $digitsForChat = $phoneNormalized !== ''
+                    ? preg_replace('/\D/', '', $phoneNormalized)
+                    : preg_replace('/\D/', '', explode('@', $sentJid)[0] ?? '');
+                if ($digitsForChat !== '') {
+                    $chatsRes = $evo->findChats($apiUrl, $apiKey, $instanceName);
+                    DebugAgentLog::write('SEND_LID_FINDCHATS', 'ChatService::enrichConversationIdentity', 'findChats para capturar LID', [
+                        'http' => $chatsRes['http'] ?? 0,
+                        'has_body' => is_array($chatsRes['body'] ?? null),
+                    ]);
+                    $discoveredLid = EvolutionApiService::extractLidForPhoneFromChats(
+                        $chatsRes['body'] ?? null,
+                        $digitsForChat,
+                        $sentJid
+                    );
+                }
+            }
+
             if ($discoveredLid !== '') {
                 $phoneJid = (str_contains($sentJid, '@s.whatsapp.net') || str_contains($sentJid, '@c.us')) ? $sentJid : null;
                 LidResolverService::storeMapping(
