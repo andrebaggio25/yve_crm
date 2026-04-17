@@ -265,10 +265,10 @@ const Inbox = {
         const isHttp = /^https?:\/\//i.test(url);
 
         if (type === 'image' || type === 'sticker') {
-            // Imagens menores e proporcionais - max 180px altura, max 240px largura
+            // Imagens compactas para desktop e mobile
             const cls = type === 'sticker'
-                ? 'h-auto max-h-28 w-auto max-w-[160px] cursor-pointer rounded-lg object-contain'
-                : 'h-auto max-h-[180px] w-auto max-w-[240px] cursor-pointer rounded-lg object-cover';
+                ? 'h-auto max-h-24 w-auto max-w-[140px] cursor-pointer rounded-lg object-contain'
+                : 'h-auto max-h-[140px] w-auto max-w-[200px] cursor-pointer rounded-lg object-cover';
             const safe = this.escape(url);
             return `<div class="${topPad} overflow-hidden rounded-lg">
                 <img src="${safe}" alt="" loading="lazy" class="${cls}" data-inbox-lightbox="${safe}" referrerpolicy="no-referrer" />
