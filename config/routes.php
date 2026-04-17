@@ -123,6 +123,7 @@ return function (Router $router) {
             $router->get('/', 'ChatController@apiList', 'api.conversations.list');
             $router->get('/by-lead/{lead_id}', 'ChatController@apiByLead', 'api.conversations.by-lead');
             $router->get('/{id}/messages', 'ChatController@apiMessages', 'api.conversations.messages');
+            $router->post('/{id}/messages/{message_id}/retry', 'ChatController@apiRetryMessage', 'api.conversations.retry');
             $router->post('/{id}/messages', 'ChatController@apiSend', 'api.conversations.send');
             $router->post('/{id}/media', 'ChatController@apiSendMedia', 'api.conversations.send-media');
         });

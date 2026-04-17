@@ -71,6 +71,15 @@ const Inbox = {
             }
         });
 
+        document.getElementById('inbox-messages')?.addEventListener('click', (e) => {
+            const btn = e.target && e.target.closest && e.target.closest('[data-inbox-retry]');
+            if (!btn) return;
+            const mid = parseInt(btn.getAttribute('data-inbox-retry') || '0', 10);
+            if (mid > 0) {
+                this.retryMessage(mid);
+            }
+        });
+
         (async () => {
             await this.loadList();
             await this.openFromHash();
@@ -267,10 +276,10 @@ const Inbox = {
         const isHttp = /^https?:\/\//i.test(url);
 
         if (type === 'image' || type === 'sticker') {
-            // Imagens compactas para desktop e mobile
+            // Tamanho legivel no chat (lightbox para zoom); contain evita faixa estreita
             const cls = type === 'sticker'
-                ? 'h-auto max-h-24 w-auto max-w-[140px] cursor-pointer rounded-lg object-contain'
-                : 'h-auto max-h-[140px] w-auto max-w-[200px] cursor-pointer rounded-lg object-cover';
+                ? 'h-auto max-h-32 w-auto max-w-[180px] cursor-pointer rounded-lg object-contain'
+                : 'h-auto max-h-[min(52vh,320px)] w-auto max-w-[min(100%,280px)] cursor-pointer rounded-lg object-contain';
             const safe = this.escape(url);
             return `<div class="${topPad} overflow-hidden rounded-lg">
                 <img src="${safe}" alt="" loading="lazy" class="${cls}" data-inbox-lightbox="${safe}" referrerpolicy="no-referrer" />
@@ -438,26 +447,47 @@ const Inbox = {
             box.innerHTML = msgs
                 .map((m) => {
                     const out = m.direction === 'outbound';
+                    const failed = out && String(m.status || '').toLowerCase() === 'failed';
                     const text = (m.content || '').trim();
                     const t = String(m.type || 'text');
                     const onlyMedia =
                         !text && ['image', 'sticker', 'video', 'audio', 'document'].includes(t);
                     const media = this.renderMediaBlock(m, out, onlyMedia);
-                    const bubble = out
-                        ? 'bg-primary-600 text-white rounded-2xl rounded-br-sm inbox-wa-bubble-out'
-                        : 'bg-white text-slate-800 rounded-2xl rounded-bl-sm ring-1 ring-slate-200/90 inbox-wa-bubble-in';
+                    let bubble;
+                    if (out && failed) {
+                        bubble =
+                            'bg-rose-700 text-white rounded-2xl rounded-br-sm ring-2 ring-rose-400/90 shadow-md inbox-wa-bubble-out';
+                    } else if (out) {
+                        bubble = 'bg-primary-600 text-white rounded-2xl rounded-br-sm inbox-wa-bubble-out';
+                    } else {
+                        bubble = 'bg-white text-slate-800 rounded-2xl rounded-bl-sm ring-1 ring-slate-200/90 inbox-wa-bubble-in';
+                    }
                     const bubblePad = onlyMedia && t === 'audio' ? 'px-2.5 py-1' : 'px-3 py-1.5';
                     const time = this.formatTime(m.created_at);
-                    const statusDot = out ? `<span class="opacity-80">· ${this.escape(m.status || '')}</span>` : '';
+                    let statusLine = '';
+                    if (out) {
+                        if (failed) {
+                            statusLine = `<span class="inline-flex items-center gap-0.5 font-medium text-rose-100">Falha ao enviar</span>`;
+                        } else {
+                            statusLine = `<span class="opacity-80">· ${this.escape(m.status || '')}</span>`;
+                        }
+                    }
+                    const retryBtn = failed
+                        ? `<button type="button" data-inbox-retry="${m.id}" class="ml-1 inline-flex shrink-0 items-center gap-0.5 rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-semibold text-white ring-1 ring-white/40 transition hover:bg-white/30" title="Tentar novamente">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-3 w-3"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 0 0 5.582 9M20 20v-5h-.581m0 0a8.003 8.003 0 0 1-15.357-2"/></svg>
+                            Reenviar
+                        </button>`
+                        : '';
                     const textHtml = text ? `<div class="whitespace-pre-wrap break-words text-[14.5px] leading-snug">${this.escape(text)}</div>` : '';
                     const metaPad = onlyMedia && t === 'audio' ? 'mt-0.5' : 'mt-1';
                     return `<div class="flex ${out ? 'justify-end' : 'justify-start'}">
                         <div class="max-w-[min(100%,18.5rem)] ${bubblePad} text-sm ${bubble}">
                             ${textHtml}
                             ${media}
-                            <div class="${metaPad} flex items-center justify-end gap-1 text-[11px] opacity-80">
+                            <div class="${metaPad} flex flex-wrap items-center justify-end gap-x-1 gap-y-1 text-[11px] ${failed ? 'text-rose-50' : 'opacity-80'}">
                                 <span class="tabular-nums">${this.escape(time)}</span>
-                                ${statusDot}
+                                ${statusLine}
+                                ${retryBtn}
                             </div>
                         </div>
                     </div>`;
@@ -489,6 +519,17 @@ const Inbox = {
             await this.loadList();
         } catch (e) {
             alert(e.message || 'Erro ao enviar');
+        }
+    },
+
+    async retryMessage(messageId) {
+        if (!this.state.activeId) return;
+        try {
+            await API.post(`/api/conversations/${this.state.activeId}/messages/${messageId}/retry`, {});
+            await this.refreshMessages();
+            await this.loadList();
+        } catch (e) {
+            alert(e.message || 'Nao foi possivel reenviar');
         }
     },
 

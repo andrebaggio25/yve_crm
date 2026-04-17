@@ -499,6 +499,218 @@ class ChatService
     }
 
     /**
+     * Reenvia mensagem outbound que falhou (texto ou midia ja persistida).
+     *
+     * @return array{ok:bool,message?:string,message_id?:int}
+     */
+    public function retryFailedMessage(int $conversationId, int $messageId): array
+    {
+        $tid = (int) TenantContext::getEffectiveTenantId();
+        $msg = TenantAwareDatabase::fetch(
+            'SELECT * FROM messages WHERE id = :mid AND conversation_id = :cid AND tenant_id = :tenant_id',
+            TenantAwareDatabase::mergeTenantParams([':mid' => $messageId, ':cid' => $conversationId])
+        );
+        if (!$msg) {
+            return ['ok' => false, 'message' => 'Mensagem nao encontrada'];
+        }
+        if (($msg['direction'] ?? '') !== 'outbound') {
+            return ['ok' => false, 'message' => 'Apenas mensagens enviadas podem ser reenviadas'];
+        }
+        if (($msg['status'] ?? '') !== 'failed') {
+            return ['ok' => false, 'message' => 'So e possivel reenviar mensagens com falha'];
+        }
+
+        $conv = TenantAwareDatabase::fetch(
+            'SELECT c.*, w.api_url, w.api_key, w.instance_name
+             FROM conversations c
+             JOIN whatsapp_instances w ON w.id = c.whatsapp_instance_id AND w.tenant_id = :wid_tid
+             WHERE c.id = :cid AND c.tenant_id = :tenant_id',
+            TenantAwareDatabase::mergeTenantParams([':cid' => $conversationId, ':wid_tid' => $tid])
+        );
+        if (!$conv) {
+            return ['ok' => false, 'message' => 'Conversa nao encontrada'];
+        }
+
+        $numberForEvolution = $this->evolutionRecipientNumber($conv);
+        if ($numberForEvolution === '') {
+            return ['ok' => false, 'message' => 'Telefone invalido'];
+        }
+
+        if (str_ends_with($numberForEvolution, '@lid')) {
+            $evo = new EvolutionApiService();
+            $contactRes = $evo->fetchContactByJid(
+                (string) $conv['api_url'],
+                (string) $conv['api_key'],
+                (string) $conv['instance_name'],
+                $numberForEvolution
+            );
+            $phoneJid = EvolutionApiService::extractPhoneJidFromContacts($contactRes['body']);
+            if ($phoneJid !== '') {
+                $localPart = explode('@', $phoneJid)[0] ?? '';
+                $numberForEvolution = preg_replace('/\D/', '', $localPart) ?: $phoneJid;
+            } else {
+                return [
+                    'ok' => false,
+                    'message' => 'Este contato usa LID sem telefone cadastrado. Cadastre o telefone no lead.',
+                ];
+            }
+        }
+
+        $type = (string) ($msg['type'] ?? 'text');
+        if ($type === 'text') {
+            $text = trim((string) ($msg['content'] ?? ''));
+            if ($text === '') {
+                return ['ok' => false, 'message' => 'Mensagem vazia'];
+            }
+            TenantAwareDatabase::update(
+                'messages',
+                ['status' => 'pending', 'error_message' => null],
+                'id = :id',
+                [':id' => $messageId]
+            );
+            $evo = new EvolutionApiService();
+            $res = $evo->sendText(
+                (string) $conv['api_url'],
+                (string) $conv['api_key'],
+                (string) $conv['instance_name'],
+                $numberForEvolution,
+                $text
+            );
+            if (!$res['ok'] && !str_contains($numberForEvolution, '@')) {
+                $meta = $this->conversationMetadata($conv);
+                $alt = (string) ($meta['wa_remote_jid_alt'] ?? '');
+                if ($alt !== '' && str_contains($alt, '@')) {
+                    $res = $evo->sendText(
+                        (string) $conv['api_url'],
+                        (string) $conv['api_key'],
+                        (string) $conv['instance_name'],
+                        $alt,
+                        $text
+                    );
+                }
+            }
+            if ($res['ok']) {
+                $waMsgId = null;
+                $body = $res['body'] ?? null;
+                if (is_array($body) && isset($body['key']['id'])) {
+                    $waMsgId = (string) $body['key']['id'];
+                }
+                $msgUpdate = ['status' => 'sent'];
+                if ($waMsgId !== null && $waMsgId !== '') {
+                    $msgUpdate['whatsapp_message_id'] = $waMsgId;
+                }
+                TenantAwareDatabase::update('messages', $msgUpdate, 'id = :id', [':id' => $messageId]);
+
+                return ['ok' => true, 'message_id' => $messageId];
+            }
+            TenantAwareDatabase::update(
+                'messages',
+                ['status' => 'failed', 'error_message' => mb_substr((string) ($res['raw'] ?? ''), 0, 500)],
+                'id = :id',
+                [':id' => $messageId]
+            );
+            $detail = EvolutionApiService::summarizeError($res);
+
+            return [
+                'ok' => false,
+                'message' => 'Falha ao reenviar (HTTP ' . ($res['http'] ?? 0) . ')' . ($detail !== '' ? ': ' . $detail : ''),
+            ];
+        }
+
+        $rel = (string) ($msg['media_local_path'] ?? '');
+        if ($rel === '') {
+            return ['ok' => false, 'message' => 'Midia nao disponivel para reenvio'];
+        }
+        $abs = MediaStorageService::absolutePathForRelative($rel);
+        if (!is_file($abs)) {
+            return ['ok' => false, 'message' => 'Arquivo nao encontrado no servidor'];
+        }
+        $bytes = file_get_contents($abs);
+        if ($bytes === false || $bytes === '') {
+            return ['ok' => false, 'message' => 'Falha ao ler arquivo'];
+        }
+        $mime = strtolower(trim((string) ($msg['media_mime_type'] ?? 'application/octet-stream')));
+        if ($mime === '' || !MediaStorageService::mimeAllowed($mime)) {
+            return ['ok' => false, 'message' => 'MIME invalido'];
+        }
+        $b64 = base64_encode($bytes);
+        $caption = trim((string) ($msg['content'] ?? ''));
+        $isVoiceNote = (int) ($msg['media_ptt'] ?? 0) === 1;
+        $fileName = (string) ($msg['media_filename'] ?? 'arquivo');
+        $dbType = (string) ($msg['type'] ?? 'document');
+
+        TenantAwareDatabase::update(
+            'messages',
+            ['status' => 'pending', 'error_message' => null],
+            'id = :id',
+            [':id' => $messageId]
+        );
+
+        $evo = new EvolutionApiService();
+        $apiUrl = (string) $conv['api_url'];
+        $apiKey = (string) $conv['api_key'];
+        $instanceName = (string) $conv['instance_name'];
+
+        $res = null;
+        if ($dbType === 'audio' && $isVoiceNote) {
+            $res = $evo->sendWhatsAppAudio($apiUrl, $apiKey, $instanceName, $numberForEvolution, $b64, $mime);
+        } elseif ($dbType === 'audio' && !$isVoiceNote) {
+            $res = $evo->sendMedia($apiUrl, $apiKey, $instanceName, $numberForEvolution, 'document', $mime, $b64, $caption, $fileName);
+        } elseif ($dbType === 'image') {
+            $res = $evo->sendMedia($apiUrl, $apiKey, $instanceName, $numberForEvolution, 'image', $mime, $b64, $caption, $fileName);
+        } elseif ($dbType === 'video') {
+            $res = $evo->sendMedia($apiUrl, $apiKey, $instanceName, $numberForEvolution, 'video', $mime, $b64, $caption, $fileName);
+        } else {
+            $res = $evo->sendMedia($apiUrl, $apiKey, $instanceName, $numberForEvolution, 'document', $mime, $b64, $caption, $fileName);
+        }
+
+        if (!$res['ok'] && !str_contains($numberForEvolution, '@')) {
+            $meta = $this->conversationMetadata($conv);
+            $alt = (string) ($meta['wa_remote_jid_alt'] ?? '');
+            if ($alt !== '' && str_contains($alt, '@')) {
+                if ($dbType === 'audio' && $isVoiceNote) {
+                    $res = $evo->sendWhatsAppAudio($apiUrl, $apiKey, $instanceName, $alt, $b64, $mime);
+                } elseif ($dbType === 'audio' && !$isVoiceNote) {
+                    $res = $evo->sendMedia($apiUrl, $apiKey, $instanceName, $alt, 'document', $mime, $b64, $caption, $fileName);
+                } elseif ($dbType === 'image') {
+                    $res = $evo->sendMedia($apiUrl, $apiKey, $instanceName, $alt, 'image', $mime, $b64, $caption, $fileName);
+                } elseif ($dbType === 'video') {
+                    $res = $evo->sendMedia($apiUrl, $apiKey, $instanceName, $alt, 'video', $mime, $b64, $caption, $fileName);
+                } else {
+                    $res = $evo->sendMedia($apiUrl, $apiKey, $instanceName, $alt, 'document', $mime, $b64, $caption, $fileName);
+                }
+            }
+        }
+
+        if ($res['ok']) {
+            $waMsgId = null;
+            $body = $res['body'] ?? null;
+            if (is_array($body) && isset($body['key']['id'])) {
+                $waMsgId = (string) $body['key']['id'];
+            }
+            $msgUpdate = ['status' => 'sent'];
+            if ($waMsgId !== null && $waMsgId !== '') {
+                $msgUpdate['whatsapp_message_id'] = $waMsgId;
+            }
+            TenantAwareDatabase::update('messages', $msgUpdate, 'id = :id', [':id' => $messageId]);
+
+            return ['ok' => true, 'message_id' => $messageId];
+        }
+        TenantAwareDatabase::update(
+            'messages',
+            ['status' => 'failed', 'error_message' => mb_substr((string) ($res['raw'] ?? ''), 0, 500)],
+            'id = :id',
+            [':id' => $messageId]
+        );
+        $detail = EvolutionApiService::summarizeError($res);
+
+        return [
+            'ok' => false,
+            'message' => 'Falha ao reenviar midia (HTTP ' . ($res['http'] ?? 0) . ')' . ($detail !== '' ? ': ' . $detail : ''),
+        ];
+    }
+
+    /**
      * Garante conversa WhatsApp para o lead sem enviar mensagem (ex.: botao rapido no Kanban).
      *
      * @return array{ok:bool,message?:string,conversation_id?:int}

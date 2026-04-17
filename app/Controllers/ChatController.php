@@ -70,6 +70,30 @@ class ChatController
         }
     }
 
+    public function apiRetryMessage(Request $request, Response $response): void
+    {
+        $cid = (int) ($request->getParam('id') ?? 0);
+        $mid = (int) ($request->getParam('message_id') ?? 0);
+        if ($cid <= 0 || $mid <= 0) {
+            $response->jsonError('Dados invalidos', 422);
+
+            return;
+        }
+        try {
+            $svc = new ChatService();
+            $out = $svc->retryFailedMessage($cid, $mid);
+            if (!$out['ok']) {
+                $response->jsonError($out['message'] ?? 'Erro ao reenviar', 422);
+
+                return;
+            }
+            $response->jsonSuccess($out, 'Reenviado');
+        } catch (\Throwable $e) {
+            App::logError('Chat retry message', $e);
+            $response->jsonError('Erro ao reenviar', 500);
+        }
+    }
+
     public function apiSendMedia(Request $request, Response $response): void
     {
         $id = (int) ($request->getParam('id') ?? 0);
