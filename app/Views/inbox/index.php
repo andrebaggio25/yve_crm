@@ -37,7 +37,10 @@ $pageTitle = 'Inbox WhatsApp';
             <input type="file" id="inbox-file" class="hidden" accept="image/*,audio/*,video/*,.pdf,.doc,.docx,application/pdf" />
             <form id="inbox-composer" class="flex items-end gap-2">
                 <button type="button" id="inbox-attach" title="Anexar" aria-label="Anexar arquivo" class="inbox-composer-icon flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-slate-600 hover:bg-slate-200/80 disabled:opacity-40" disabled>
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-7 w-7"><path fill-rule="evenodd" d="M18.97 3.659a2.25 2.25 0 0 0-3.182 0l-10.94 10.94a4.5 4.5 0 0 0 6.364 6.364l7.5-7.5a.75.75 0 1 0-1.06-1.06l-7.5 7.5a3 3 0 1 1-4.243-4.243l10.939-10.94a.75.75 0 0 1 1.061 0l3.182 3.182a.75.75 0 0 1-1.06 1.061l-10.94 10.94a1.5 1.5 0 0 0 2.122 2.122l7.5-7.5a.75.75 0 1 0-1.06-1.06l-7.5 7.5a.75.75 0 0 1-1.061 0Z" clip-rule="evenodd" /></svg>
+                    <!-- Paperclip elegante estilo WhatsApp -->
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6">
+                        <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                    </svg>
                 </button>
                 <div class="relative min-h-[48px] min-w-0 flex-1 rounded-[1.5rem] bg-white shadow-sm ring-1 ring-slate-200/80">
                     <textarea id="inbox-text" rows="1" class="inbox-text-input max-h-32 min-h-[48px] w-full resize-none rounded-[1.5rem] border-0 bg-transparent px-4 py-3 pr-3 text-sm leading-snug focus:outline-none focus:ring-0 disabled:opacity-50" placeholder="Mensagem" disabled></textarea>
@@ -60,10 +63,19 @@ $pageTitle = 'Inbox WhatsApp';
                     </div>
                 </div>
                 <button type="submit" id="inbox-send" title="Enviar" aria-label="Enviar mensagem" class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-primary-600 text-white shadow-md hover:bg-primary-700 disabled:hidden" disabled>
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-6 w-6"><path d="M3.478 2.404a.75.75 0 0 0-.926.941l2.432 7.905H13.5a.75.75 0 0 1 0 1.5H4.984l-2.432 7.905a.75.75 0 0 0 .926.94 60.519 60.519 0 0 0 18.445-8.167.75.75 0 0 0 0-1.5A60.517 60.517 0 0 0 3.478 2.404Z" /></svg>
+                    <!-- Enviar estilo WhatsApp -->
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-6 w-6 translate-x-0.5">
+                        <path d="M3.5 13.09 20.5 4.5l-6.59 17L8.7 13.71l-5.2-.62Z"/>
+                        <path d="m8.7 13.71 3.21-3.21"/>
+                    </svg>
                 </button>
                 <button type="button" id="inbox-mic" title="Gravar audio" aria-label="Gravar audio" class="inbox-composer-icon flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-slate-600 hover:bg-slate-200/80 disabled:opacity-40" disabled>
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-7 w-7"><path d="M8.25 4.5a3.75 3.75 0 1 1 7.5 0v6a3.75 3.75 0 1 1-7.5 0v-6ZM15 10.5a3 3 0 1 1-6 0v-6a3 3 0 0 1 6 0v6Z" /><path d="M3.75 10.5a.75.75 0 0 0 0 1.5h1.37a6.75 6.75 0 0 0 12.76 0h1.37a.75.75 0 0 0 0-1.5h-1.37a6.75 6.75 0 0 0-12.76 0H3.75Z" /></svg>
+                    <!-- Microfone elegante estilo WhatsApp -->
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6">
+                        <path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3Z"/>
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                        <line x1="12" y1="19" x2="12" y2="22"/>
+                    </svg>
                 </button>
             </form>
         </footer>
