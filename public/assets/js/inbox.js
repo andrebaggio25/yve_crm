@@ -11,6 +11,9 @@ const Inbox = {
         mediaRecorder: null,
         recordedChunks: [],
         recordingMime: '',
+        recording: false,
+        recInterval: null,
+        recStartedAt: 0,
         lightboxEl: null,
         lightboxImg: null,
         lightboxClose: null,
@@ -24,12 +27,14 @@ const Inbox = {
             e.preventDefault();
             this.send();
         });
-        document.getElementById('inbox-text')?.addEventListener('keydown', (e) => {
+        const inboxTa = document.getElementById('inbox-text');
+        inboxTa?.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 this.send();
             }
         });
+        inboxTa?.addEventListener('input', () => this.syncComposer());
         document.getElementById('inbox-search')?.addEventListener('input', () => this.renderList());
 
         document.getElementById('inbox-attach')?.addEventListener('click', () => {
@@ -42,14 +47,26 @@ const Inbox = {
             }
             e.target.value = '';
         });
-        document.getElementById('inbox-mic')?.addEventListener('click', () => this.toggleMic());
+        document.getElementById('inbox-mic')?.addEventListener('click', () => this.onMicButton());
 
+        document.getElementById('inbox-rec-cancel')?.addEventListener('click', () => this.cancelRecording());
         document.getElementById('inbox-media-cancel')?.addEventListener('click', () => this.closeMediaModal());
+        document.getElementById('inbox-media-dismiss')?.addEventListener('click', () => this.closeMediaModal());
         document.getElementById('inbox-media-confirm')?.addEventListener('click', () => this.confirmSendMedia());
 
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
+                if (this.state.recording) {
+                    this.cancelRecording();
+                    return;
+                }
                 this.closeLightbox();
+                this.closeMediaModal();
+            }
+        });
+
+        document.getElementById('inbox-media-modal')?.addEventListener('click', (e) => {
+            if (e.target && e.target.id === 'inbox-media-modal') {
                 this.closeMediaModal();
             }
         });
@@ -60,6 +77,7 @@ const Inbox = {
         })();
         this.state.pollList = setInterval(() => this.loadList(), 10000);
         window.addEventListener('hashchange', () => this.openFromHash());
+        this.syncComposer();
     },
 
     async openFromHash() {
@@ -147,6 +165,27 @@ const Inbox = {
         return (x / (1024 * 1024)).toFixed(1) + ' MB';
     },
 
+    /** Enviar visivel so com texto; microfone quando campo vazio (estilo WhatsApp). */
+    syncComposer() {
+        const ta = document.getElementById('inbox-text');
+        const send = document.getElementById('inbox-send');
+        const mic = document.getElementById('inbox-mic');
+        if (!ta || !send || !mic) return;
+        if (this.state.recording) {
+            send.classList.add('hidden');
+            mic.classList.remove('hidden');
+            return;
+        }
+        const has = (ta.value || '').trim().length > 0;
+        if (has) {
+            send.classList.remove('hidden');
+            mic.classList.add('hidden');
+        } else {
+            send.classList.add('hidden');
+            mic.classList.remove('hidden');
+        }
+    },
+
     renderList() {
         const el = document.getElementById('inbox-list');
         if (!el) return;
@@ -211,9 +250,10 @@ const Inbox = {
         return String(u);
     },
 
-    renderMediaBlock(m, out) {
+    renderMediaBlock(m, out, compact) {
         const url = this.mediaUrl(m);
         const type = String(m.type || 'text');
+        const topPad = compact ? 'mt-0' : 'mt-2';
         if (!url) {
             if (type !== 'text' && type !== 'unknown') {
                 return '<p class="mt-1 text-xs opacity-80">Midia indisponivel</p>';
@@ -222,51 +262,53 @@ const Inbox = {
         }
 
         const isApi = url.startsWith('/api/messages/');
+        const isHttp = /^https?:\/\//i.test(url);
 
         if (type === 'image' || type === 'sticker') {
             const cls = type === 'sticker'
                 ? 'max-h-36 w-auto max-w-[200px] cursor-pointer rounded-lg object-contain'
                 : 'max-h-56 max-w-full cursor-pointer rounded-lg object-cover';
             const safe = this.escape(url);
-            return `<div class="mt-2 overflow-hidden rounded-lg">
+            return `<div class="${topPad} overflow-hidden rounded-lg">
                 <img src="${safe}" alt="" loading="lazy" class="${cls}" data-inbox-lightbox="${safe}" referrerpolicy="no-referrer" />
             </div>`;
         }
 
         if (type === 'video') {
             const safe = this.escape(url);
-            return `<div class="mt-2 max-w-full overflow-hidden rounded-lg">
+            return `<div class="${topPad} max-w-full overflow-hidden rounded-lg">
                 <video controls class="max-h-64 w-full rounded-lg bg-black/5" preload="metadata" src="${safe}"></video>
             </div>`;
         }
 
         if (type === 'audio') {
             const ptt = Number(m.media_ptt) === 1;
-            const pttBadge = ptt
-                ? `<span class="mb-1 inline-block rounded-md ${out ? 'bg-white/20 text-white' : 'bg-primary-100 text-primary-800'} px-2 py-0.5 text-[10px] font-medium">Mensagem de voz</span>`
+            const pttInline = ptt
+                ? `<span class="shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${out ? 'bg-white/25 text-white' : 'bg-primary-100 text-primary-800'}">voz</span>`
                 : '';
             if (isApi && typeof window.WaveSurfer !== 'undefined') {
                 const outCls = out ? 'inbox-audio-out' : '';
-                const border = out ? 'border-white/25 bg-white/10' : 'border-slate-200 bg-slate-50';
-                return `<div class="inbox-audio-player mt-2 max-w-full rounded-xl border ${border} px-2 py-2 ${outCls}" data-inbox-audio data-audio-src="${this.escape(url)}">
-                    ${pttBadge}
-                    <div class="flex items-center gap-2">
-                        <button type="button" data-play class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${out ? 'bg-white/20 text-white' : 'bg-primary-600 text-white'} text-sm">▶</button>
-                        <div class="min-h-[36px] min-w-0 flex-1" data-waveform></div>
-                        <span data-time class="shrink-0 font-mono text-[10px] opacity-80">0:00</span>
-                        <button type="button" data-rate class="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-medium ${out ? 'bg-white/15 text-white' : 'bg-slate-200 text-slate-700'}">1×</button>
+                const border = out ? 'border-white/20 bg-black/10' : 'border-slate-200 bg-white';
+                const pad = compact ? 'px-2 py-1.5' : 'px-2 py-2';
+                return `<div class="inbox-audio-player ${topPad} max-w-[min(100%,260px)] rounded-full border ${border} ${pad} ${outCls}" data-inbox-audio data-audio-src="${this.escape(url)}">
+                    <div class="flex items-center gap-1.5">
+                        <button type="button" data-play class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${out ? 'bg-white text-primary-600' : 'bg-primary-600 text-white'} text-xs shadow-sm">▶</button>
+                        <div class="min-h-[32px] min-w-0 flex-1" data-waveform></div>
+                        ${pttInline}
+                        <span data-time class="shrink-0 font-mono text-[10px] tabular-nums opacity-90">0:00</span>
+                        <button type="button" data-rate class="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${out ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-800'}">1×</button>
                     </div>
                 </div>`;
             }
-            return `<div class="mt-2">${pttBadge}<audio controls class="h-9 w-full max-w-[280px]" preload="metadata" src="${this.escape(url)}"></audio></div>`;
+            return `<div class="${topPad} flex max-w-[260px] items-center gap-2">${pttInline}<audio controls class="h-8 min-w-0 flex-1" preload="metadata" src="${this.escape(url)}"></audio></div>`;
         }
 
         if (type === 'document') {
             const name = m.media_filename ? String(m.media_filename) : 'Documento';
             const sz = this.formatBytes(m.media_size_bytes);
-            const meta = sz ? `<span class="text-[10px] opacity-70">${this.escape(sz)}</span>` : '';
-            return `<a href="${this.escape(url)}" target="_blank" rel="noopener noreferrer" class="mt-2 flex max-w-full items-center gap-2 rounded-xl border ${out ? 'border-white/30 bg-white/10' : 'border-slate-200 bg-white'} px-3 py-2 text-xs shadow-sm">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-5 w-5 shrink-0 opacity-70"><path fill-rule="evenodd" d="M5.625 1.5c-1.036 0-1.875.84-1.875 1.875v17.25c0 1.035.84 1.875 1.875 1.875h12.75c1.035 0 1.875-.84 1.875-1.875V12.75A3.75 3.75 0 0 0 16.5 9h-1.875a1.875 1.875 0 0 1-1.875-1.875V5.25A3.75 3.75 0 0 0 9 1.5H5.625ZM7.5 15a.75.75 0 0 1 .75-.75h7.5a.75.75 0 0 1 0 1.5h-7.5A.75.75 0 0 1 7.5 15Zm.75 2.25a.75.75 0 0 0 0 1.5H12a.75.75 0 0 0 0-1.5H8.25Z" clip-rule="evenodd" /><path d="M14.25 5.25a3 3 0 0 0 3 3h3.75a3 3 0 0 0-3-3h-3.75Z" /></svg>
+            const meta = sz ? `<span class="text-[10px] opacity-80">${this.escape(sz)}</span>` : '';
+            return `<a href="${this.escape(url)}" target="_blank" rel="noopener noreferrer" class="${topPad} flex max-w-full items-center gap-2 rounded-xl border ${out ? 'border-white/30 bg-white text-slate-900' : 'border-slate-200 bg-white text-slate-900'} px-3 py-2 text-left text-xs shadow-sm ring-1 ring-black/5">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-8 w-8 shrink-0 text-primary-600 opacity-90"><path fill-rule="evenodd" d="M5.625 1.5c-1.036 0-1.875.84-1.875 1.875v17.25c0 1.035.84 1.875 1.875 1.875h12.75c1.035 0 1.875-.84 1.875-1.875V12.75A3.75 3.75 0 0 0 16.5 9h-1.875a1.875 1.875 0 0 1-1.875-1.875V5.25A3.75 3.75 0 0 0 9 1.5H5.625ZM7.5 15a.75.75 0 0 1 .75-.75h7.5a.75.75 0 0 1 0 1.5h-7.5A.75.75 0 0 1 7.5 15Zm.75 2.25a.75.75 0 0 0 0 1.5H12a.75.75 0 0 0 0-1.5H8.25Z" clip-rule="evenodd" /><path d="M14.25 5.25a3 3 0 0 0 3 3h3.75a3 3 0 0 0-3-3h-3.75Z" /></svg>
                 <span class="min-w-0 flex-1 truncate font-medium">${this.escape(name)}</span>
                 ${meta}
             </a>`;
@@ -357,6 +399,7 @@ const Inbox = {
         if (att) att.disabled = false;
         if (mic) mic.disabled = false;
 
+        this.syncComposer();
         this.refreshMessages();
         this.state.pollMsg = setInterval(() => this.refreshMessages(), 3000);
     },
@@ -383,19 +426,24 @@ const Inbox = {
             box.innerHTML = msgs
                 .map((m) => {
                     const out = m.direction === 'outbound';
-                    const media = this.renderMediaBlock(m, out);
+                    const text = (m.content || '').trim();
+                    const t = String(m.type || 'text');
+                    const onlyMedia =
+                        !text && ['image', 'sticker', 'video', 'audio', 'document'].includes(t);
+                    const media = this.renderMediaBlock(m, out, onlyMedia);
                     const bubble = out
                         ? 'bg-primary-600 text-white rounded-tr-sm'
                         : 'bg-white text-slate-800 ring-1 ring-slate-200 rounded-tl-sm';
+                    const bubblePad = onlyMedia && t === 'audio' ? 'px-2.5 py-1' : 'px-3 py-2';
                     const time = this.formatTime(m.created_at);
                     const statusDot = out ? `<span class="opacity-70">· ${this.escape(m.status || '')}</span>` : '';
-                    const text = (m.content || '').trim();
                     const textHtml = text ? `<div class="whitespace-pre-wrap break-words">${this.escape(text)}</div>` : '';
+                    const metaPad = onlyMedia && t === 'audio' ? 'mt-0.5' : 'mt-1';
                     return `<div class="flex ${out ? 'justify-end' : 'justify-start'}">
-                        <div class="max-w-[min(100%,28rem)] rounded-2xl px-3 py-2 text-sm shadow-sm ${bubble}">
+                        <div class="max-w-[min(100%,20rem)] rounded-2xl ${bubblePad} text-sm shadow-sm ${bubble}">
                             ${textHtml}
                             ${media}
-                            <div class="mt-1 flex items-center justify-end gap-1 text-[10px] opacity-70">
+                            <div class="${metaPad} flex items-center justify-end gap-1 text-[10px] opacity-70">
                                 <span>${this.escape(time)}</span>
                                 ${statusDot}
                             </div>
@@ -424,6 +472,7 @@ const Inbox = {
         try {
             await API.post(`/api/conversations/${this.state.activeId}/messages`, { text });
             t.value = '';
+            this.syncComposer();
             await this.refreshMessages();
             await this.loadList();
         } catch (e) {
@@ -435,6 +484,10 @@ const Inbox = {
         if (!this.state.activeId) return;
         this.state.pendingMedia = { file, isVoice };
         const modal = document.getElementById('inbox-media-modal');
+        const title = document.getElementById('inbox-media-modal-title');
+        if (title) {
+            title.textContent = isVoice ? 'Enviar audio' : 'Enviar arquivo';
+        }
         const prev = document.getElementById('inbox-media-preview');
         const cap = document.getElementById('inbox-media-caption');
         if (cap) cap.value = '';
@@ -499,12 +552,22 @@ const Inbox = {
         fd.append('file', p.file, p.file.name || 'upload');
         if (caption) fd.append('caption', caption);
         if (p.isVoice) fd.append('is_voice_note', '1');
+        const ct = p.file.type || '';
+        if (ct) fd.append('client_mime', ct);
+        console.info('[InboxMedia] enviando', {
+            conv: this.state.activeId,
+            name: p.file.name,
+            size: p.file.size,
+            type: ct,
+            isVoice: !!p.isVoice,
+        });
         try {
             await API.postForm(`/api/conversations/${this.state.activeId}/media`, fd);
             this.closeMediaModal();
             await this.refreshMessages();
             await this.loadList();
         } catch (e) {
+            console.error('[InboxMedia] falha', e, e?.data);
             alert(e.message || 'Erro ao enviar midia');
         }
     },
@@ -523,22 +586,61 @@ const Inbox = {
         return 'bin';
     },
 
-    async toggleMic() {
+    clearRecTimer() {
+        if (this.state.recInterval) {
+            clearInterval(this.state.recInterval);
+            this.state.recInterval = null;
+        }
+    },
+
+    setRecordingUi(active) {
+        const ta = document.getElementById('inbox-text');
+        const bar = document.getElementById('inbox-recording-bar');
+        const att = document.getElementById('inbox-attach');
+        if (ta) ta.classList.toggle('hidden', active);
+        if (bar) {
+            bar.classList.toggle('hidden', !active);
+            bar.classList.toggle('flex', active);
+            bar.classList.toggle('flex-col', active);
+        }
+        if (att) att.disabled = !!active;
+        this.syncComposer();
+    },
+
+    tickRecTimer() {
+        const el = document.getElementById('inbox-rec-timer');
+        if (!el) return;
+        const ms = Date.now() - this.state.recStartedAt;
+        const s = Math.floor(ms / 1000);
+        const m = Math.floor(s / 60);
+        const r = s % 60;
+        el.textContent = `${m}:${String(r).padStart(2, '0')}`;
+    },
+
+    onMicButton() {
         if (!this.state.activeId) return;
         if (this.state.mediaRecorder && this.state.mediaRecorder.state === 'recording') {
-            this.state.mediaRecorder.stop();
+            this.stopRecording();
             return;
         }
+        this.startRecording();
+    },
+
+    async startRecording() {
         const mime = this.pickRecorderMime();
         if (!mime || !navigator.mediaDevices?.getUserMedia) {
+            console.warn('[InboxMedia] gravacao indisponivel', { mime, hasGum: !!navigator.mediaDevices?.getUserMedia });
             alert('Gravacao de audio nao suportada neste navegador.');
             return;
         }
-        const btn = document.getElementById('inbox-mic');
+        console.info('[InboxMedia] iniciando gravacao', { mime });
+        const micBtn = document.getElementById('inbox-mic');
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             this.state.recordedChunks = [];
             this.state.recordingMime = mime;
+            this.state.recording = true;
+            this.state.recStartedAt = Date.now();
             const rec = new MediaRecorder(stream, { mimeType: mime });
             this.state.mediaRecorder = rec;
             rec.ondataavailable = (e) => {
@@ -550,20 +652,63 @@ const Inbox = {
                 const ext = this.extForMime(this.state.recordingMime);
                 const f = new File([blob], `gravacao.${ext}`, { type: this.state.recordingMime });
                 this.state.mediaRecorder = null;
-                if (btn) {
-                    btn.classList.remove('animate-pulse', 'border-red-400', 'text-red-600', 'bg-red-50');
+                this.state.recording = false;
+                this.clearRecTimer();
+                this.setRecordingUi(false);
+                if (micBtn) {
+                    micBtn.classList.remove('ring-2', 'ring-red-500', 'bg-red-50', 'text-red-600');
                 }
-                if (blob.size > 0) {
-                    this.openMediaModal(f, true);
+                console.info('[InboxMedia] gravacao parada', { bytes: blob.size, mime: this.state.recordingMime });
+                if (blob.size === 0) {
+                    console.warn('[InboxMedia] blob vazio — nada a enviar');
+                    alert('Gravacao vazia. Tente novamente.');
+                    return;
                 }
+                this.openMediaModal(f, true);
             };
-            rec.start();
-            if (btn) {
-                btn.classList.add('animate-pulse', 'border-red-400', 'text-red-600', 'bg-red-50');
+            rec.start(250);
+            this.setRecordingUi(true);
+            this.clearRecTimer();
+            this.tickRecTimer();
+            this.state.recInterval = setInterval(() => this.tickRecTimer(), 250);
+            if (micBtn) {
+                micBtn.classList.add('ring-2', 'ring-red-500', 'bg-red-50', 'text-red-600');
             }
         } catch (err) {
-            console.warn(err);
+            console.error('[InboxMedia] getUserMedia', err);
             alert('Nao foi possivel acessar o microfone.');
+        }
+    },
+
+    stopRecording() {
+        const rec = this.state.mediaRecorder;
+        if (rec && rec.state === 'recording') {
+            rec.stop();
+        }
+    },
+
+    cancelRecording() {
+        console.info('[InboxMedia] gravacao cancelada');
+        const rec = this.state.mediaRecorder;
+        if (rec) {
+            const stream = rec.stream;
+            rec.onstop = () => {
+                stream?.getTracks().forEach((t) => t.stop());
+            };
+            this.state.recordedChunks = [];
+            if (rec.state === 'recording') {
+                rec.stop();
+            } else {
+                stream?.getTracks().forEach((t) => t.stop());
+            }
+            this.state.mediaRecorder = null;
+        }
+        this.state.recording = false;
+        this.clearRecTimer();
+        this.setRecordingUi(false);
+        const micBtn = document.getElementById('inbox-mic');
+        if (micBtn) {
+            micBtn.classList.remove('ring-2', 'ring-red-500', 'bg-red-50', 'text-red-600');
         }
     },
 };

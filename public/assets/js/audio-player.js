@@ -53,7 +53,7 @@
                 cursorColor: progColor,
                 barWidth: 2,
                 barRadius: 2,
-                height: 36,
+                height: 32,
                 normalize: true,
                 url: src,
             });

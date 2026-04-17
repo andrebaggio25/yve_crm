@@ -411,7 +411,8 @@ class ChatService
 
         $res = null;
         if ($dbType === 'audio' && $isVoiceNote) {
-            $res = $evo->sendWhatsAppAudio($apiUrl, $apiKey, $instanceName, $numberForEvolution, $b64);
+            App::log('[Chat] sendMediaFromUpload PTT Evolution: conv=' . $conversationId . ' mime=' . $mime . ' bytes=' . $sizeBytes);
+            $res = $evo->sendWhatsAppAudio($apiUrl, $apiKey, $instanceName, $numberForEvolution, $b64, $mime);
         } elseif ($dbType === 'audio' && !$isVoiceNote) {
             $res = $evo->sendMedia($apiUrl, $apiKey, $instanceName, $numberForEvolution, 'document', $mime, $b64, $caption, $fileName);
         } elseif ($dbType === 'image') {
@@ -427,7 +428,7 @@ class ChatService
             $alt = (string) ($meta['wa_remote_jid_alt'] ?? '');
             if ($alt !== '' && str_contains($alt, '@')) {
                 if ($dbType === 'audio' && $isVoiceNote) {
-                    $res = $evo->sendWhatsAppAudio($apiUrl, $apiKey, $instanceName, $alt, $b64);
+                    $res = $evo->sendWhatsAppAudio($apiUrl, $apiKey, $instanceName, $alt, $b64, $mime);
                 } elseif ($dbType === 'audio' && !$isVoiceNote) {
                     $res = $evo->sendMedia($apiUrl, $apiKey, $instanceName, $alt, 'document', $mime, $b64, $caption, $fileName);
                 } elseif ($dbType === 'image') {
@@ -465,6 +466,14 @@ class ChatService
                 App::log('[Chat] enrichConversationIdentity (media) falhou: ' . $e->getMessage());
             }
         } else {
+            App::log(
+                '[Chat] sendMediaFromUpload Evolution falhou: conv=' . $conversationId
+                . ' http=' . ($res['http'] ?? 0)
+                . ' dbType=' . $dbType
+                . ' voice=' . ($isVoiceNote ? '1' : '0')
+                . ' mime=' . $mime
+                . ' raw=' . mb_substr((string) ($res['raw'] ?? ''), 0, 1200)
+            );
             TenantAwareDatabase::update(
                 'messages',
                 ['status' => 'failed', 'error_message' => mb_substr((string) ($res['raw'] ?? ''), 0, 500)],

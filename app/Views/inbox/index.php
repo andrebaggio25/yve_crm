@@ -33,37 +33,57 @@ $pageTitle = 'Inbox WhatsApp';
         <div id="inbox-messages" class="min-h-[240px] flex-1 space-y-2 overflow-y-auto p-4 lg:max-h-[calc(100vh-14rem)]">
             <p class="text-center text-sm text-slate-500">Escolha um lead na lista</p>
         </div>
-        <footer class="border-t border-slate-200 bg-white p-3">
+        <footer class="border-t border-slate-200 bg-[#f0f2f5] p-2 sm:p-3">
             <input type="file" id="inbox-file" class="hidden" accept="image/*,audio/*,video/*,.pdf,.doc,.docx,application/pdf" />
-            <form id="inbox-composer" class="flex flex-col gap-2 sm:flex-row sm:items-end">
-                <div class="flex min-w-0 flex-1 items-end gap-1.5">
-                    <button type="button" id="inbox-attach" title="Anexar arquivo" aria-label="Anexar arquivo" class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50 disabled:opacity-50" disabled>
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-5 w-5"><path fill-rule="evenodd" d="M18.97 3.659a2.25 2.25 0 0 0-3.182 0l-10.94 10.94a4.5 4.5 0 0 0 6.364 6.364l7.5-7.5a.75.75 0 1 0-1.06-1.06l-7.5 7.5a3 3 0 1 1-4.243-4.243l10.939-10.94a.75.75 0 0 1 1.061 0l3.182 3.182a.75.75 0 0 1-1.06 1.061l-10.94 10.94a1.5 1.5 0 0 0 2.122 2.122l7.5-7.5a.75.75 0 1 0-1.06-1.06l-7.5 7.5a.75.75 0 0 1-1.061 0Z" clip-rule="evenodd" /></svg>
-                    </button>
-                    <button type="button" id="inbox-mic" title="Gravar audio" aria-label="Gravar audio" class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50 disabled:opacity-50" disabled>
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-5 w-5"><path d="M8.25 4.5a3.75 3.75 0 1 1 7.5 0v6a3.75 3.75 0 1 1-7.5 0v-6ZM15 10.5a3 3 0 1 1-6 0v-6a3 3 0 0 1 6 0v6Z" /><path d="M3.75 10.5a.75.75 0 0 0 0 1.5h1.37a6.75 6.75 0 0 0 12.76 0h1.37a.75.75 0 0 0 0-1.5h-1.37a6.75 6.75 0 0 0-12.76 0H3.75Z" /></svg>
-                    </button>
-                    <textarea id="inbox-text" rows="2" class="min-h-[44px] min-w-0 flex-1 resize-none rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20" placeholder="Mensagem..." disabled></textarea>
+            <form id="inbox-composer" class="flex items-end gap-2">
+                <button type="button" id="inbox-attach" title="Anexar" aria-label="Anexar arquivo" class="inbox-composer-icon flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-slate-600 hover:bg-slate-200/80 disabled:opacity-40" disabled>
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-7 w-7"><path fill-rule="evenodd" d="M18.97 3.659a2.25 2.25 0 0 0-3.182 0l-10.94 10.94a4.5 4.5 0 0 0 6.364 6.364l7.5-7.5a.75.75 0 1 0-1.06-1.06l-7.5 7.5a3 3 0 1 1-4.243-4.243l10.939-10.94a.75.75 0 0 1 1.061 0l3.182 3.182a.75.75 0 0 1-1.06 1.061l-10.94 10.94a1.5 1.5 0 0 0 2.122 2.122l7.5-7.5a.75.75 0 1 0-1.06-1.06l-7.5 7.5a.75.75 0 0 1-1.061 0Z" clip-rule="evenodd" /></svg>
+                </button>
+                <div class="relative min-h-[48px] min-w-0 flex-1 rounded-[1.5rem] bg-white shadow-sm ring-1 ring-slate-200/80">
+                    <textarea id="inbox-text" rows="1" class="inbox-text-input max-h-32 min-h-[48px] w-full resize-none rounded-[1.5rem] border-0 bg-transparent px-4 py-3 pr-3 text-sm leading-snug focus:outline-none focus:ring-0 disabled:opacity-50" placeholder="Mensagem" disabled></textarea>
+                    <div id="inbox-recording-bar" class="hidden min-h-[48px] flex-col justify-center gap-1 px-3 py-2">
+                        <div class="flex items-center gap-2">
+                            <span class="relative flex h-3 w-3 shrink-0">
+                                <span id="inbox-rec-pulse" class="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-500 opacity-75"></span>
+                                <span class="relative inline-flex h-3 w-3 rounded-full bg-red-600"></span>
+                            </span>
+                            <span id="inbox-rec-timer" class="font-mono text-sm font-medium tabular-nums text-slate-800">0:00</span>
+                            <div class="inbox-rec-wave flex flex-1 items-end justify-center gap-0.5 px-1">
+                                <span class="inbox-rec-bar h-2 w-1 rounded-sm bg-primary-500"></span>
+                                <span class="inbox-rec-bar h-4 w-1 rounded-sm bg-primary-500"></span>
+                                <span class="inbox-rec-bar h-3 w-1 rounded-sm bg-primary-500"></span>
+                                <span class="inbox-rec-bar h-5 w-1 rounded-sm bg-primary-500"></span>
+                                <span class="inbox-rec-bar h-2 w-1 rounded-sm bg-primary-500"></span>
+                            </div>
+                        </div>
+                        <p class="text-center text-[11px] text-slate-500">Toque no microfone para parar · <button type="button" id="inbox-rec-cancel" class="font-medium text-red-600 underline">Cancelar</button></p>
+                    </div>
                 </div>
-                <button type="submit" class="h-11 shrink-0 rounded-xl bg-primary-600 px-5 text-sm font-medium text-white shadow-sm hover:bg-primary-700 disabled:opacity-50 sm:self-end" disabled id="inbox-send">Enviar</button>
+                <button type="submit" id="inbox-send" title="Enviar" aria-label="Enviar mensagem" class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-primary-600 text-white shadow-md hover:bg-primary-700 disabled:hidden" disabled>
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-6 w-6"><path d="M3.478 2.404a.75.75 0 0 0-.926.941l2.432 7.905H13.5a.75.75 0 0 1 0 1.5H4.984l-2.432 7.905a.75.75 0 0 0 .926.94 60.519 60.519 0 0 0 18.445-8.167.75.75 0 0 0 0-1.5A60.517 60.517 0 0 0 3.478 2.404Z" /></svg>
+                </button>
+                <button type="button" id="inbox-mic" title="Gravar audio" aria-label="Gravar audio" class="inbox-composer-icon flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-slate-600 hover:bg-slate-200/80 disabled:opacity-40" disabled>
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-7 w-7"><path d="M8.25 4.5a3.75 3.75 0 1 1 7.5 0v6a3.75 3.75 0 1 1-7.5 0v-6ZM15 10.5a3 3 0 1 1-6 0v-6a3 3 0 0 1 6 0v6Z" /><path d="M3.75 10.5a.75.75 0 0 0 0 1.5h1.37a6.75 6.75 0 0 0 12.76 0h1.37a.75.75 0 0 0 0-1.5h-1.37a6.75 6.75 0 0 0-12.76 0H3.75Z" /></svg>
+                </button>
             </form>
         </footer>
     </section>
 </div>
 
-<div id="inbox-media-modal" class="fixed inset-0 z-50 hidden items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" aria-hidden="true" role="dialog" aria-labelledby="inbox-media-modal-title">
-    <div class="flex max-h-[100dvh] w-full max-w-md flex-col rounded-t-2xl bg-white shadow-xl sm:max-h-[90vh] sm:rounded-2xl">
-        <div class="border-b border-slate-100 px-4 py-3">
-            <h3 id="inbox-media-modal-title" class="text-sm font-semibold text-slate-900">Enviar midia</h3>
+<div id="inbox-media-modal" class="fixed inset-0 z-50 hidden items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4" aria-hidden="true" role="dialog" aria-labelledby="inbox-media-modal-title">
+    <div class="flex max-h-[100dvh] w-full max-w-md flex-col rounded-t-3xl bg-[#f0f2f5] shadow-2xl sm:max-h-[90vh] sm:rounded-3xl">
+        <div class="flex items-center justify-between border-b border-slate-200/80 bg-white px-4 py-3 sm:rounded-t-3xl">
+            <h3 id="inbox-media-modal-title" class="text-base font-semibold text-slate-900">Enviar</h3>
+            <button type="button" id="inbox-media-dismiss" class="rounded-full p-2 text-slate-500 hover:bg-slate-100" aria-label="Fechar">&times;</button>
         </div>
         <div class="min-h-0 flex-1 overflow-y-auto p-4">
-            <div id="inbox-media-preview" class="mb-3 min-h-[100px] rounded-xl bg-slate-50"></div>
-            <label for="inbox-media-caption" class="mb-1 block text-xs font-medium text-slate-500">Legenda (opcional)</label>
-            <textarea id="inbox-media-caption" rows="2" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20"></textarea>
+            <div id="inbox-media-preview" class="mb-4 overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/80"></div>
+            <label for="inbox-media-caption" class="mb-1.5 block text-xs font-medium text-slate-600">Legenda</label>
+            <textarea id="inbox-media-caption" rows="2" class="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20" placeholder="Adicione uma legenda..."></textarea>
         </div>
-        <div class="flex justify-end gap-2 border-t border-slate-100 p-4">
-            <button type="button" id="inbox-media-cancel" class="h-11 rounded-xl border border-slate-200 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancelar</button>
-            <button type="button" id="inbox-media-confirm" class="h-11 rounded-xl bg-primary-600 px-4 text-sm font-medium text-white hover:bg-primary-700">Enviar</button>
+        <div class="flex justify-end gap-3 border-t border-slate-200/80 bg-white p-4 sm:rounded-b-3xl">
+            <button type="button" id="inbox-media-cancel" class="h-12 rounded-full px-6 text-sm font-semibold text-slate-700 hover:bg-slate-100">Cancelar</button>
+            <button type="button" id="inbox-media-confirm" class="h-12 min-w-[120px] rounded-full bg-primary-600 px-6 text-sm font-semibold text-white shadow-md hover:bg-primary-700">Enviar</button>
         </div>
     </div>
 </div>

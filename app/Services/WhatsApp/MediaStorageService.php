@@ -76,6 +76,58 @@ class MediaStorageService
         return false;
     }
 
+    /**
+     * Ajusta MIME apos finfo (sou gravações WebM costumam vir como octet-stream ou video/webm).
+     *
+     * @param string $clientMimeHint MIME reportado pelo browser (FormData client_mime), so confiavel se whitelist.
+     */
+    public static function refineDetectedMime(
+        string $detectedMime,
+        string $originalFilename,
+        string $clientMimeHint,
+        bool $isVoiceNote
+    ): string {
+        $d = strtolower(trim($detectedMime));
+        $hint = strtolower(trim($clientMimeHint));
+        if ($hint !== '' && self::mimeAllowed($hint) && str_starts_with($hint, 'audio/')) {
+            return $hint;
+        }
+
+        if ($isVoiceNote && $d === 'video/webm') {
+            return 'audio/webm';
+        }
+
+        if ($d !== 'application/octet-stream' && $d !== '' && $d !== 'inode/x-empty') {
+            return $detectedMime;
+        }
+
+        $ext = strtolower(pathinfo($originalFilename, PATHINFO_EXTENSION) ?: '');
+        $byExt = [
+            'webm' => 'audio/webm',
+            'ogg' => 'audio/ogg',
+            'opus' => 'audio/ogg',
+            'mp3' => 'audio/mpeg',
+            'm4a' => 'audio/mp4',
+            'wav' => 'audio/wav',
+            'mp4' => 'video/mp4',
+            'pdf' => 'application/pdf',
+            'png' => 'image/png',
+            'jpg' => 'image/jpeg',
+            'jpeg' => 'image/jpeg',
+            'gif' => 'image/gif',
+            'webp' => 'image/webp',
+        ];
+        if (isset($byExt[$ext]) && self::mimeAllowed($byExt[$ext])) {
+            return $byExt[$ext];
+        }
+
+        if ($isVoiceNote) {
+            return 'audio/webm';
+        }
+
+        return $detectedMime;
+    }
+
     public static function extensionFromMime(string $mime): string
     {
         $map = [

@@ -97,7 +97,7 @@ class ChatController
         }
         $tmp = (string) ($file['tmp_name'] ?? '');
         $orig = (string) ($file['name'] ?? 'upload');
-        if ($tmp === '' || !is_uploaded_file($tmp)) {
+        if ($tmp === '') {
             $response->jsonError('Upload invalido', 422);
 
             return;
@@ -114,15 +114,40 @@ class ChatController
                 }
             }
         }
-        if (!MediaStorageService::mimeAllowed($mime)) {
-            $response->jsonError('Tipo de arquivo nao permitido', 422);
-
-            return;
-        }
 
         $caption = trim((string) $request->post('caption'));
         $vRaw = strtolower((string) $request->post('is_voice_note'));
         $isVoice = in_array($vRaw, ['1', 'true', 'on', 'yes'], true);
+        $clientMime = trim((string) $request->post('client_mime'));
+
+        $uploadOk = is_uploaded_file($tmp);
+        App::log(
+            '[InboxMedia] conv=' . $id
+            . ' orig=' . $orig
+            . ' size=' . (int) ($file['size'] ?? 0)
+            . ' php_err=' . (int) ($file['error'] ?? -1)
+            . ' is_uploaded_file=' . ($uploadOk ? '1' : '0')
+            . ' finfo=' . $mime
+            . ' client_mime=' . ($clientMime !== '' ? $clientMime : '-')
+            . ' voice=' . ($isVoice ? '1' : '0')
+        );
+
+        if (!$uploadOk) {
+            App::log('[InboxMedia] AVISO: is_uploaded_file=false — upload pode ser rejeitado pelo PHP/SAPI');
+            $response->jsonError('Upload invalido (sessao/arquivo temporario)', 422);
+
+            return;
+        }
+
+        $mime = MediaStorageService::refineDetectedMime($mime, $orig, $clientMime, $isVoice);
+        App::log('[InboxMedia] mime_refinado=' . $mime);
+
+        if (!MediaStorageService::mimeAllowed($mime)) {
+            App::log('[InboxMedia] rejeitado mime nao permitido apos refinamento');
+            $response->jsonError('Tipo de arquivo nao permitido', 422);
+
+            return;
+        }
 
         $bytes = file_get_contents($tmp);
         if ($bytes === false || $bytes === '') {
@@ -145,10 +170,12 @@ class ChatController
             $svc = new ChatService();
             $out = $svc->sendMediaFromUpload($id, $stored['relative_path'], $caption, $isVoice, $mime, $orig);
             if (!$out['ok']) {
+                App::log('[InboxMedia] ChatService retornou erro: ' . ($out['message'] ?? ''));
                 $response->jsonError($out['message'] ?? 'Erro ao enviar', 422);
 
                 return;
             }
+            App::log('[InboxMedia] envio OK conv=' . $id . ' msg_id=' . (int) ($out['message_id'] ?? 0) . ' voice=' . ($isVoice ? '1' : '0'));
             $response->jsonSuccess($out, 'Enviado');
         } catch (\Throwable $e) {
             App::logError('Chat send media', $e);
