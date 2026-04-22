@@ -3,7 +3,6 @@
 namespace App\Services\Mail;
 
 use App\Core\Database;
-use App\Core\Env;
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception as MailException;
 
@@ -73,25 +72,29 @@ class SmtpProcessor
 
     private static function buildMailer(): PHPMailer
     {
+        $c = MailConfig::getSmtp();
         $mail = new PHPMailer(true);
         $mail->isSMTP();
-        $mail->Host = (string) Env::get('MAIL_HOST', 'localhost');
-        $mail->Port = (int) Env::get('MAIL_PORT', '587');
-        $mail->SMTPAuth = true;
-        $mail->Username = (string) Env::get('MAIL_USERNAME', '');
-        $mail->Password = (string) Env::get('MAIL_PASSWORD', '');
-        $enc = strtoupper((string) Env::get('MAIL_ENCRYPTION', 'tls'));
-        if ($enc === 'TLS') {
-            $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-        } elseif ($enc === 'SSL') {
+        $mail->Host = $c['host'] ?: 'localhost';
+        $mail->Port = $c['port'] > 0 ? $c['port'] : 587;
+        $user = $c['username'];
+        $pass = $c['password'];
+        $mail->Username = $user;
+        $mail->Password = $pass;
+        $mail->SMTPAuth = $user !== '' && $pass !== '';
+        $enc = $c['encryption'] ?? 'tls';
+        if ($enc === 'ssl') {
             $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
-        } else {
+        } elseif ($enc === 'none') {
+            $mail->SMTPSecure = '';
             $mail->SMTPAutoTLS = false;
+        } else {
+            $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
         }
         $mail->CharSet = 'UTF-8';
         $mail->setFrom(
-            (string) Env::get('MAIL_FROM_ADDRESS', 'noreply@example.com'),
-            (string) Env::get('MAIL_FROM_NAME', 'Yve CRM')
+            $c['from_address'] !== '' ? $c['from_address'] : 'noreply@example.com',
+            $c['from_name'] !== '' ? $c['from_name'] : 'Yve CRM'
         );
 
         return $mail;

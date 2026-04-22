@@ -171,12 +171,15 @@ return function (Router $router) {
             $router->get('/system-status', 'SuperAdminSettingsController@apiSystemStatus', 'api.superadmin.system-status');
             $router->get('/evolution-config', 'SuperAdminSettingsController@apiGetEvolutionConfig', 'api.superadmin.evolution-config');
             $router->put('/evolution-config', 'SuperAdminSettingsController@apiUpdateEvolutionConfig', 'api.superadmin.evolution-config.update');
+            $router->get('/smtp-config', 'SuperAdminSettingsController@apiGetSmtpConfig', 'api.superadmin.smtp-config');
+            $router->put('/smtp-config', 'SuperAdminSettingsController@apiUpdateSmtpConfig', 'api.superadmin.smtp-config.update');
         }, array_merge($superadminMiddleware, $csrfMiddleware));
 
         // Superadmin APIs - gerenciamento de tenants (com tenant para contexto de operacao)
         $router->group('superadmin', function ($router) {
             $router->get('/tenants', 'SuperAdminTenantController@apiList', 'api.superadmin.tenants');
             $router->post('/tenants', 'SuperAdminTenantController@apiCreate', 'api.superadmin.tenants.create');
+            $router->put('/tenants/{id}', 'SuperAdminTenantController@apiUpdate', 'api.superadmin.tenants.update');
             $router->post('/tenants/{id}/status', 'SuperAdminTenantController@apiSetStatus', 'api.superadmin.tenant.status');
             $router->post('/tenants/{id}/impersonate', 'SuperAdminTenantController@impersonate', 'api.superadmin.impersonate');
             $router->post('/stop-impersonate', 'SuperAdminTenantController@stopImpersonate', 'api.superadmin.stop');

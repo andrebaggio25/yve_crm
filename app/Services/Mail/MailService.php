@@ -3,7 +3,6 @@
 namespace App\Services\Mail;
 
 use App\Core\Database;
-use App\Core\Env;
 
 class MailService
 {
@@ -36,6 +35,6 @@ class MailService
 
     public static function isConfigured(): bool
     {
-        return Env::get('MAIL_HOST', '') !== '' && Env::get('MAIL_USERNAME', '') !== '';
+        return MailConfig::isConfigured();
     }
 }

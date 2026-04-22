@@ -4,9 +4,10 @@ namespace App\Controllers;
 
 use App\Core\App;
 use App\Core\Database;
+use App\Core\Env;
 use App\Core\Request;
 use App\Core\Response;
-use App\Core\Session;
+use App\Services\Mail\MailConfig;
 
 /**
  * Configurações globais do sistema - apenas superadmin
@@ -79,6 +80,87 @@ class SuperAdminSettingsController
     /**
      * Status e controle das filas/migrations
      */
+    /**
+     * Config SMTP (globais) — lido no MailConfig com fallback .env
+     */
+    public function apiGetSmtpConfig(Request $request, Response $response): void
+    {
+        try {
+            $c = MailConfig::getSmtp();
+            $stored = $this->getSystemSettings();
+            $dbPwd = (string) ($stored['smtp_password'] ?? '');
+
+            $response->jsonSuccess([
+                'smtp_host' => $c['host'],
+                'smtp_port' => $c['port'],
+                'smtp_encryption' => $c['encryption'],
+                'smtp_username' => $c['username'],
+                'smtp_from_address' => $c['from_address'],
+                'smtp_from_name' => $c['from_name'],
+                'smtp_password' => '',
+                'password_set' => $dbPwd !== '' || (string) Env::get('MAIL_PASSWORD', '') !== '',
+            ]);
+        } catch (\Throwable $e) {
+            App::logError('Erro ao buscar smtp', $e);
+            $response->jsonError('Erro ao carregar', 500);
+        }
+    }
+
+    public function apiUpdateSmtpConfig(Request $request, Response $response): void
+    {
+        $data = $request->getJsonInput() ?? [];
+
+        $host = trim((string) ($data['smtp_host'] ?? ''));
+        $port = (int) ($data['smtp_port'] ?? 0);
+        $enc = trim((string) ($data['smtp_encryption'] ?? 'tls'));
+        if (!in_array($enc, ['tls', 'ssl', 'none'], true)) {
+            $enc = 'tls';
+        }
+        $user = trim((string) ($data['smtp_username'] ?? ''));
+        $fromA = trim((string) ($data['smtp_from_address'] ?? ''));
+        $fromN = trim((string) ($data['smtp_from_name'] ?? ''));
+        $newPwd = array_key_exists('smtp_password', $data) ? (string) $data['smtp_password'] : null;
+
+        if ($host === '') {
+            $response->jsonError('Host SMTP e obrigatorio', 422);
+
+            return;
+        }
+        if ($port <= 0 || $port > 65535) {
+            $response->jsonError('Porta invalida', 422);
+
+            return;
+        }
+        if ($user === '') {
+            $response->jsonError('Usuario SMTP e obrigatorio', 422);
+
+            return;
+        }
+
+        try {
+            $settings = $this->getSystemSettings();
+            $settings['smtp_host'] = $host;
+            $settings['smtp_port'] = $port;
+            $settings['smtp_encryption'] = $enc;
+            $settings['smtp_username'] = $user;
+            $settings['smtp_from_address'] = $fromA;
+            $settings['smtp_from_name'] = $fromN;
+
+            if ($newPwd !== null && $newPwd !== '') {
+                $settings['smtp_password'] = $newPwd;
+            }
+            // vazio: mantem senha anterior se existir
+
+            $this->saveSystemSettings($settings);
+            App::log('Config SMTP (system settings) salva pelo superadmin');
+
+            $response->jsonSuccess([], 'Configuracoes de e-mail salvas');
+        } catch (\Throwable $e) {
+            App::logError('Erro ao salvar smtp', $e);
+            $response->jsonError('Erro ao salvar', 500);
+        }
+    }
+
     public function apiSystemStatus(Request $request, Response $response): void
     {
         try {
