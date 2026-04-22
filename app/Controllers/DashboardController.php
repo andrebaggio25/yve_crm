@@ -2,9 +2,10 @@
 
 namespace App\Controllers;
 
+use App\Core\App;
 use App\Core\Request;
 use App\Core\Response;
-use App\Core\Database;
+use App\Core\TenantAwareDatabase;
 
 class DashboardController
 {
@@ -12,89 +13,234 @@ class DashboardController
     {
         $response->view('dashboard.index', [
             'title' => 'Dashboard',
-            'pageTitle' => 'Dashboard'
+            'pageTitle' => 'Dashboard',
         ]);
     }
 
     public function apiMetrics(Request $request, Response $response): void
     {
-        $period = $request->get('period', '30');
+        try {
+            $this->computeMetrics($request, $response);
+        } catch (\Throwable $e) {
+            App::logError('Dashboard apiMetrics', $e);
+            $msg = 'Erro ao calcular metricas do dashboard';
+            if (App::config('debug')) {
+                $msg .= ': ' . $e->getMessage();
+            }
+            $response->jsonError($msg, 500);
+        }
+    }
+
+    private function computeMetrics(Request $request, Response $response): void
+    {
+        $period = (int) $request->get('period', '30');
+        $period = max(1, min(365, $period));
+
         $pipelineId = $request->get('pipeline_id');
         $userId = $request->get('user_id');
+        $pipelineId = $pipelineId !== null && $pipelineId !== '' ? (int) $pipelineId : null;
+        $userId = $userId !== null && $userId !== '' ? (int) $userId : null;
 
-        $dateFrom = date('Y-m-d', strtotime("-{$period} days"));
-        
-        $whereClauses = ['deleted_at IS NULL'];
-        $params = [];
-        
+        $dateFrom = date('Y-m-d 00:00:00', strtotime("-{$period} days"));
+
+        $whereClauses = ['l.deleted_at IS NULL', 'l.tenant_id = :tenant_id'];
+        $params = TenantAwareDatabase::mergeTenantParams();
+        $tenantId = (int) ($params[':tenant_id'] ?? 1);
+
         if ($pipelineId) {
-            $whereClauses[] = 'pipeline_id = :pipeline_id';
+            $whereClauses[] = 'l.pipeline_id = :pipeline_id';
             $params[':pipeline_id'] = $pipelineId;
         }
-        
+
         if ($userId) {
-            $whereClauses[] = 'assigned_user_id = :user_id';
+            $whereClauses[] = 'l.assigned_user_id = :user_id';
             $params[':user_id'] = $userId;
         }
-        
+
         $whereSql = implode(' AND ', $whereClauses);
-        
-        $totalLeads = Database::fetch(
-            "SELECT COUNT(*) as total FROM leads WHERE {$whereSql} AND created_at >= :date_from",
+
+        $totalLeads = TenantAwareDatabase::fetch(
+            "SELECT COUNT(*) as total FROM leads l WHERE {$whereSql} AND l.created_at >= :date_from",
             array_merge($params, [':date_from' => $dateFrom])
         )['total'] ?? 0;
 
-        $leadsByStage = Database::fetchAll(
-            "SELECT ps.name as stage_name, COUNT(l.id) as total, SUM(l.value) as value
+        $leadsByStage = TenantAwareDatabase::fetchAll(
+            "SELECT COALESCE(MAX(ps.name), 'Sem etapa') AS stage_name,
+                    COUNT(l.id) AS total,
+                    SUM(l.value) AS value
              FROM leads l
-             JOIN pipeline_stages ps ON l.stage_id = ps.id
-             WHERE l.{$whereSql}
-             GROUP BY ps.id, ps.name
-             ORDER BY ps.position",
+             LEFT JOIN pipeline_stages ps ON l.stage_id = ps.id AND ps.pipeline_id = l.pipeline_id
+             WHERE {$whereSql}
+             GROUP BY ps.id
+             ORDER BY COALESCE(MIN(ps.position), 999) ASC, stage_name ASC",
             $params
         );
 
-        $wonLeads = Database::fetch(
-            "SELECT COUNT(*) as total, SUM(value) as value FROM leads 
-             WHERE status = 'won' AND {$whereSql} AND won_at >= :date_from",
+        $wonLeads = TenantAwareDatabase::fetch(
+            "SELECT COUNT(*) as total, SUM(l.value) as value FROM leads l
+             WHERE l.status = 'won' AND {$whereSql} AND l.won_at >= :date_from",
             array_merge($params, [':date_from' => $dateFrom])
         );
 
-        $lostLeads = Database::fetch(
-            "SELECT COUNT(*) as total FROM leads 
-             WHERE status = 'lost' AND {$whereSql} AND lost_at >= :date_from",
+        $lostLeads = TenantAwareDatabase::fetch(
+            "SELECT COUNT(*) as total FROM leads l
+             WHERE l.status = 'lost' AND {$whereSql} AND l.lost_at >= :date_from",
             array_merge($params, [':date_from' => $dateFrom])
         );
 
-        $activeLeads = Database::fetch(
-            "SELECT COUNT(*) as total FROM leads WHERE status = 'active' AND {$whereSql}",
+        $activeLeads = TenantAwareDatabase::fetch(
+            "SELECT COUNT(*) as total FROM leads l WHERE l.status = 'active' AND {$whereSql}",
             $params
         )['total'] ?? 0;
 
-        $conversionRate = $totalLeads > 0 
-            ? round(($wonLeads['total'] / $totalLeads) * 100, 2) 
+        $conversionRate = $totalLeads > 0
+            ? round(((int) ($wonLeads['total'] ?? 0) / (int) $totalLeads) * 100, 2)
             : 0;
 
-        $avgDealValue = $wonLeads['total'] > 0 
-            ? round($wonLeads['value'] / $wonLeads['total'], 2) 
+        $avgDealValue = ($wonLeads['total'] ?? 0) > 0
+            ? round((float) ($wonLeads['value'] ?? 0) / (int) $wonLeads['total'], 2)
             : 0;
 
-        $leadsOverdue = Database::fetch(
-            "SELECT COUNT(*) as total FROM leads 
-             WHERE next_action_at < NOW() AND status = 'active' AND {$whereSql}",
+        $leadsOverdue = TenantAwareDatabase::fetch(
+            "SELECT COUNT(*) as total FROM leads l
+             WHERE l.next_action_at < NOW() AND l.status = 'active' AND {$whereSql}",
             $params
         )['total'] ?? 0;
+
+        $pipelineOpen = TenantAwareDatabase::fetch(
+            "SELECT COALESCE(SUM(l.value), 0) as v FROM leads l
+             WHERE l.status = 'active' AND {$whereSql}",
+            $params
+        )['v'] ?? 0;
+
+        $unassignedLeads = TenantAwareDatabase::fetch(
+            "SELECT COUNT(*) as total FROM leads l
+             WHERE l.status = 'active' AND l.assigned_user_id IS NULL AND {$whereSql}",
+            $params
+        )['total'] ?? 0;
+
+        $tempRows = TenantAwareDatabase::fetchAll(
+            "SELECT l.temperature as t, COUNT(l.id) as c FROM leads l
+             WHERE l.status = 'active' AND {$whereSql}
+             GROUP BY l.temperature",
+            $params
+        );
+        $leadsByTemperature = ['hot' => 0, 'warm' => 0, 'cold' => 0];
+        foreach ($tempRows as $row) {
+            $k = strtolower((string) ($row['t'] ?? 'cold'));
+            if (isset($leadsByTemperature[$k])) {
+                $leadsByTemperature[$k] = (int) $row['c'];
+            }
+        }
+
+        $convOpen = 0;
+        $waUnread = 0;
+        $msgCounts = ['inbound' => 0, 'outbound' => 0];
+        try {
+            $convOpen = (int) (TenantAwareDatabase::fetch(
+                "SELECT COUNT(*) as c FROM conversations WHERE tenant_id = :tenant_id AND status IN ('open', 'pending')",
+                [':tenant_id' => $tenantId]
+            )['c'] ?? 0);
+
+            $waUnread = (int) (TenantAwareDatabase::fetch(
+                "SELECT COALESCE(SUM(unread_count), 0) as s FROM conversations WHERE tenant_id = :tenant_id AND status IN ('open', 'pending')",
+                [':tenant_id' => $tenantId]
+            )['s'] ?? 0);
+
+            $msgCounts = TenantAwareDatabase::fetch(
+                "SELECT
+                    SUM(CASE WHEN direction = 'inbound' THEN 1 ELSE 0 END) as inbound,
+                    SUM(CASE WHEN direction = 'outbound' THEN 1 ELSE 0 END) as outbound
+                 FROM messages
+                 WHERE tenant_id = :tenant_id AND created_at >= :date_from",
+                [':tenant_id' => $tenantId, ':date_from' => $dateFrom]
+            ) ?: $msgCounts;
+        } catch (\Throwable $e) {
+            App::logError('Dashboard metricas WhatsApp (conversations/messages)', $e);
+        }
+
+        $leadsByDay = TenantAwareDatabase::fetchAll(
+            "SELECT DATE(l.created_at) as d, COUNT(l.id) as c
+             FROM leads l
+             WHERE {$whereSql} AND l.created_at >= :date_from
+             GROUP BY DATE(l.created_at)
+             ORDER BY DATE(l.created_at) ASC",
+            array_merge($params, [':date_from' => $dateFrom])
+        );
+
+        $dayMap = [];
+        foreach ($leadsByDay as $row) {
+            $dayMap[(string) $row['d']] = (int) $row['c'];
+        }
+        $leadsByDayFilled = [];
+        $start = new \DateTimeImmutable(substr($dateFrom, 0, 10));
+        $end = new \DateTimeImmutable('today');
+        for ($d = $start; $d <= $end; $d = $d->modify('+1 day')) {
+            $key = $d->format('Y-m-d');
+            $leadsByDayFilled[] = [
+                'date' => $key,
+                'count' => $dayMap[$key] ?? 0,
+            ];
+        }
+
+        $recentEvents = [];
+        try {
+            $recentEvents = TenantAwareDatabase::fetchAll(
+                "SELECT e.id, e.lead_id, e.event_type, e.description, e.created_at,
+                        l.name AS lead_name,
+                        u.name AS user_name
+                 FROM lead_events e
+                 INNER JOIN leads l ON l.id = e.lead_id AND l.deleted_at IS NULL AND l.tenant_id = :tenant_id
+                 LEFT JOIN users u ON u.id = e.user_id
+                 WHERE {$whereSql}
+                 ORDER BY e.created_at DESC
+                 LIMIT 20",
+                $params
+            );
+        } catch (\Throwable $e) {
+            App::logError('Dashboard recent_events', $e);
+        }
 
         $response->jsonSuccess([
+            'period_days' => $period,
             'total_leads' => (int) $totalLeads,
             'active_leads' => (int) $activeLeads,
             'won_leads' => (int) ($wonLeads['total'] ?? 0),
             'won_value' => (float) ($wonLeads['value'] ?? 0),
             'lost_leads' => (int) ($lostLeads['total'] ?? 0),
             'conversion_rate' => $conversionRate,
+            'conversion_denominator' => 'Novos leads no periodo',
             'avg_deal_value' => $avgDealValue,
             'leads_overdue' => (int) $leadsOverdue,
-            'leads_by_stage' => $leadsByStage
+            'pipeline_open_value' => (float) $pipelineOpen,
+            'unassigned_leads' => (int) $unassignedLeads,
+            'leads_by_temperature' => $leadsByTemperature,
+            'conversations_open' => (int) $convOpen,
+            'wa_unread_total' => (int) $waUnread,
+            'messages_inbound' => (int) ($msgCounts['inbound'] ?? 0),
+            'messages_outbound' => (int) ($msgCounts['outbound'] ?? 0),
+            'leads_by_day' => $leadsByDayFilled,
+            'leads_by_stage' => $leadsByStage,
+            'recent_events' => $recentEvents,
         ]);
+    }
+
+    /**
+     * Lista usuarios do tenant para filtro do dashboard (sem exigir role admin).
+     */
+    public function apiTeamUsers(Request $request, Response $response): void
+    {
+        try {
+            $users = TenantAwareDatabase::fetchAll(
+                "SELECT id, name, email FROM users
+                 WHERE deleted_at IS NULL AND tenant_id = :tenant_id AND status = 'active'
+                 ORDER BY name ASC",
+                TenantAwareDatabase::mergeTenantParams()
+            );
+            $response->jsonSuccess(['users' => $users]);
+        } catch (\Throwable $e) {
+            App::logError('Dashboard team-users', $e);
+            $response->jsonError('Erro ao carregar equipe', 500);
+        }
     }
 }

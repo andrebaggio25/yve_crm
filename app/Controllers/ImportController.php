@@ -3,13 +3,16 @@
 namespace App\Controllers;
 
 use App\Core\App;
-use App\Core\Database;
+use App\Core\TenantAwareDatabase;
 use App\Core\Request;
 use App\Core\Response;
 use App\Core\Session;
 use App\Helpers\LeadTagHelper;
 use App\Helpers\PhoneHelper;
+use App\Services\Automation\AutomationEngine;
 use App\Services\LeadImportService;
+use App\Services\WhatsApp\LidResolverService;
+use App\Core\TenantContext;
 
 class ImportController
 {
@@ -216,12 +219,15 @@ class ImportController
             }
         }
 
-        $defaultPipeline = Database::fetch('SELECT id FROM pipelines WHERE is_default = 1 LIMIT 1');
+        $defaultPipeline = TenantAwareDatabase::fetch(
+            'SELECT id FROM pipelines WHERE is_default = 1 AND tenant_id = :tenant_id LIMIT 1',
+            TenantAwareDatabase::mergeTenantParams()
+        );
         $pipelineId = $defaultPipeline ? (int) $defaultPipeline['id'] : 1;
 
-        $defaultStage = Database::fetch(
-            'SELECT id FROM pipeline_stages WHERE pipeline_id = :pipeline_id AND is_default = 1 LIMIT 1',
-            [':pipeline_id' => $pipelineId]
+        $defaultStage = TenantAwareDatabase::fetch(
+            'SELECT id FROM pipeline_stages WHERE pipeline_id = :pipeline_id AND is_default = 1 AND tenant_id = :tenant_id LIMIT 1',
+            TenantAwareDatabase::mergeTenantParams([':pipeline_id' => $pipelineId])
         );
         $stageId = $defaultStage ? (int) $defaultStage['id'] : null;
 
@@ -230,9 +236,12 @@ class ImportController
             'imported' => 0,
             'duplicates' => 0,
             'errors' => [],
+            'whatsapp_enriched' => 0,
         ];
+        $importedForWa = [];
+        $importedIds = [];
 
-        $db = Database::getInstance();
+        $db = TenantAwareDatabase::getInstance();
         $db->beginTransaction();
 
         try {
@@ -258,9 +267,9 @@ class ImportController
                 if ($telefone !== '') {
                     $phoneNormalized = PhoneHelper::normalize($telefone);
                     if ($phoneNormalized) {
-                        $existing = Database::fetch(
-                            'SELECT id FROM leads WHERE phone_normalized = :phone AND deleted_at IS NULL LIMIT 1',
-                            [':phone' => $phoneNormalized]
+                        $existing = TenantAwareDatabase::fetch(
+                            'SELECT id FROM leads WHERE phone_normalized = :phone AND deleted_at IS NULL AND tenant_id = :tenant_id LIMIT 1',
+                            TenantAwareDatabase::mergeTenantParams([':phone' => $phoneNormalized])
                         );
                         if ($existing) {
                             $results['duplicates']++;
@@ -272,7 +281,7 @@ class ImportController
 
                 $value = $this->parseMoney($valorRaw);
 
-                $leadId = Database::insert('leads', [
+                $leadId = TenantAwareDatabase::insert('leads', [
                     'pipeline_id' => $pipelineId,
                     'stage_id' => $stageId,
                     'assigned_user_id' => $user['id'],
@@ -292,7 +301,7 @@ class ImportController
                     LeadTagHelper::syncProductTags($leadId, $produto);
                 }
 
-                Database::insert('lead_events', [
+                TenantAwareDatabase::insert('lead_events', [
                     'lead_id' => $leadId,
                     'user_id' => $user['id'],
                     'event_type' => 'import',
@@ -301,9 +310,42 @@ class ImportController
                 ]);
 
                 $results['imported']++;
+                if ($phoneNormalized) {
+                    $importedForWa[] = ['id' => (int) $leadId, 'phone' => (string) $phoneNormalized];
+                }
+                $importedIds[] = [
+                    'id' => (int) $leadId,
+                    'pipeline_id' => (int) $pipelineId,
+                    'stage_id' => (int) $stageId,
+                ];
             }
 
             $db->commit();
+
+            $tid = (int) TenantContext::getEffectiveTenantId();
+            foreach ($importedForWa as $row) {
+                try {
+                    LidResolverService::enrichLeadMetadataAfterPhoneCheck($tid, $row['id'], $row['phone']);
+                    $results['whatsapp_enriched']++;
+                } catch (\Throwable $e) {
+                    App::logError('Import WhatsApp enrich', $e);
+                }
+            }
+
+            // Dispara lead_created por lead importado (executa apos commit
+            // para garantir que as automacoes veem o lead persistido).
+            foreach ($importedIds as $row) {
+                try {
+                    AutomationEngine::dispatch($tid, 'lead_created', [
+                        'lead_id' => $row['id'],
+                        'pipeline_id' => $row['pipeline_id'],
+                        'stage_id' => $row['stage_id'],
+                        '_origin' => 'import',
+                    ]);
+                } catch (\Throwable $e) {
+                    App::logError('AutomationEngine import lead_created', $e);
+                }
+            }
 
             $this->cleanupImportFile($session);
             Session::remove(self::SESSION_PREFIX . $token);

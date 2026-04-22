@@ -3,6 +3,7 @@
  */
 
 const Kanban = {
+    leadChatPollId: null,
     pipelineId: null,
     columns: [],
     isLoading: false,
@@ -13,6 +14,7 @@ const Kanban = {
         const page = document.querySelector('.kanban-page');
         this.pipelineId = page?.dataset.pipelineId ? parseInt(page.dataset.pipelineId, 10) : 1;
         this.bindEvents();
+        this.initEntryTriagemUi();
         this.initDragAndDrop();
         this.initLeadDetailKeyboard();
         this.loadUsers();
@@ -78,51 +80,6 @@ const Kanban = {
             root.querySelectorAll('[data-kanban-column].kanban-dnd-active').forEach((el) => this.clearColumnDropStyle(el));
         });
 
-        root.addEventListener('dragover', (e) => {
-            if (!this._dragLeadId) return;
-            const col = e.target.closest('[data-kanban-column]');
-            if (!col) return;
-            e.preventDefault();
-            e.dataTransfer.dropEffect = 'move';
-            root.querySelectorAll('[data-kanban-column].kanban-dnd-active').forEach((el) => {
-                if (el !== col) this.clearColumnDropStyle(el);
-            });
-            col.classList.add('kanban-dnd-active', 'ring-2', 'ring-primary-400', 'ring-offset-2', 'bg-primary-50/60');
-        });
-
-        root.addEventListener('dragleave', (e) => {
-            const col = e.target.closest('[data-kanban-column]');
-            if (!col) return;
-            const related = e.relatedTarget;
-            if (related && col.contains(related)) return;
-            this.clearColumnDropStyle(col);
-        });
-
-        root.addEventListener('drop', async (e) => {
-            const col = e.target.closest('[data-kanban-column]');
-            if (!col || !this._dragLeadId) return;
-            e.preventDefault();
-            this.clearColumnDropStyle(col);
-            const stageId = col.getAttribute('data-stage-id');
-            const fromStage = e.dataTransfer.getData('application/x-kanban-stage');
-            const leadId = parseInt(this._dragLeadId, 10);
-            if (!stageId || !leadId) return;
-            if (fromStage && String(fromStage) === String(stageId)) {
-                return;
-            }
-            try {
-                const res = await API.leads.moveStage(leadId, parseInt(stageId, 10));
-                if (res.success) {
-                    App.toast('Lead movido', 'success');
-                    this.loadData();
-                } else {
-                    App.toast(res.message || 'Nao foi possivel mover o lead', 'error');
-                }
-            } catch (err) {
-                App.toast(err.message || 'Erro ao mover lead', 'error');
-            }
-        });
-
         root.addEventListener('click', (e) => {
             const card = e.target.closest('.kanban-card[data-lead-id]');
             if (!card || e.target.closest('button')) return;
@@ -134,6 +91,294 @@ const Kanban = {
 
     clearColumnDropStyle(el) {
         el.classList.remove('kanban-dnd-active', 'ring-2', 'ring-primary-400', 'ring-offset-2', 'bg-primary-50/60');
+    },
+
+    /**
+     * dragover/drop na coluna com capture=true para funcionar sobre areas com scroll (filhos bloqueavam o drop).
+     */
+    bindColumnDragAndDrop(column) {
+        column.addEventListener(
+            'dragover',
+            (e) => {
+                if (!this._dragLeadId) return;
+                if (column.getAttribute('data-kanban-no-drop') === '1') {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'none';
+                    return;
+                }
+                e.preventDefault();
+                e.stopPropagation();
+                e.dataTransfer.dropEffect = 'move';
+                document.querySelectorAll('[data-kanban-column].kanban-dnd-active').forEach((el) => {
+                    if (el !== column) this.clearColumnDropStyle(el);
+                });
+                column.classList.add('kanban-dnd-active', 'ring-2', 'ring-primary-400', 'ring-offset-2', 'bg-primary-50/60');
+            },
+            true
+        );
+
+        column.addEventListener(
+            'dragleave',
+            (e) => {
+                if (!this._dragLeadId) return;
+                const related = e.relatedTarget;
+                if (related && column.contains(related)) return;
+                this.clearColumnDropStyle(column);
+            },
+            true
+        );
+
+        column.addEventListener(
+            'drop',
+            async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (!this._dragLeadId) return;
+                this.clearColumnDropStyle(column);
+                if (column.getAttribute('data-kanban-no-drop') === '1') {
+                    App.toast('Use Vincular ou Aceitar na coluna Leads de Entrada', 'info');
+                    return;
+                }
+                const stageIdRaw = column.getAttribute('data-stage-id');
+                const fromStage = e.dataTransfer.getData('application/x-kanban-stage');
+                const leadId = parseInt(this._dragLeadId, 10);
+                if (stageIdRaw === null || stageIdRaw === '' || Number.isNaN(leadId) || leadId < 1) return;
+                if (fromStage !== '' && String(fromStage) === String(stageIdRaw)) return;
+                const stageId = parseInt(stageIdRaw, 10);
+                if (Number.isNaN(stageId) || stageId < 1) return;
+                try {
+                    const res = await API.leads.moveStage(leadId, stageId);
+                    if (res.success) {
+                        App.toast('Lead movido', 'success');
+                        this.loadData();
+                    } else {
+                        App.toast(res.message || 'Nao foi possivel mover o lead', 'error');
+                    }
+                } catch (err) {
+                    App.toast(err.message || err.data?.message || 'Erro ao mover lead', 'error');
+                }
+            },
+            true
+        );
+    },
+
+    initEntryTriagemUi() {
+        const page = document.querySelector('.kanban-page');
+        if (!page || page.dataset.entryUiBound === '1') return;
+        page.dataset.entryUiBound = '1';
+
+        page.addEventListener('click', async (e) => {
+            const link = e.target.closest('.entry-btn-link');
+            if (link) {
+                e.preventDefault();
+                e.stopPropagation();
+                const id = parseInt(link.getAttribute('data-lead-id'), 10);
+                if (id) this.openEntryLinkModal(id);
+                return;
+            }
+            const acc = e.target.closest('.entry-btn-accept');
+            if (acc) {
+                e.preventDefault();
+                e.stopPropagation();
+                const id = parseInt(acc.getAttribute('data-lead-id'), 10);
+                if (id) await this.openEntryAcceptModal(id);
+                return;
+            }
+            const disc = e.target.closest('.entry-btn-discard');
+            if (disc) {
+                e.preventDefault();
+                e.stopPropagation();
+                const id = parseInt(disc.getAttribute('data-lead-id'), 10);
+                if (id) await this.confirmDiscardEntry(id);
+                return;
+            }
+        });
+
+        document.querySelectorAll('[data-entry-link-close]').forEach((b) =>
+            b.addEventListener('click', () => this.closeEntryLinkModal())
+        );
+        document.getElementById('entry-link-modal')?.addEventListener('click', (e) => {
+            if (e.target.id === 'entry-link-modal') this.closeEntryLinkModal();
+        });
+
+        document.getElementById('entry-link-search-btn')?.addEventListener('click', () => this.runEntryLinkSearch());
+        document.getElementById('entry-link-search')?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                this.runEntryLinkSearch();
+            }
+        });
+
+        document.querySelectorAll('[data-entry-accept-close]').forEach((b) =>
+            b.addEventListener('click', () => this.closeEntryAcceptModal())
+        );
+        document.getElementById('entry-accept-modal')?.addEventListener('click', (e) => {
+            if (e.target.id === 'entry-accept-modal') this.closeEntryAcceptModal();
+        });
+
+        document.getElementById('entry-accept-form')?.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            await this.submitEntryAccept();
+        });
+    },
+
+    openEntryLinkModal(provisionalId) {
+        this._entryLinkProvisionalId = provisionalId;
+        const m = document.getElementById('entry-link-modal');
+        const inp = document.getElementById('entry-link-search');
+        const ul = document.getElementById('entry-link-results');
+        if (inp) inp.value = '';
+        if (ul) ul.innerHTML = '';
+        if (m) {
+            m.classList.remove('hidden');
+            m.classList.add('flex');
+            m.setAttribute('aria-hidden', 'false');
+        }
+        requestAnimationFrame(() => inp?.focus());
+    },
+
+    closeEntryLinkModal() {
+        this._entryLinkProvisionalId = null;
+        const m = document.getElementById('entry-link-modal');
+        if (!m) return;
+        if (m.contains(document.activeElement) && typeof document.activeElement.blur === 'function') {
+            document.activeElement.blur();
+        }
+        m.setAttribute('aria-hidden', 'true');
+        m.classList.add('hidden');
+        m.classList.remove('flex');
+    },
+
+    async runEntryLinkSearch() {
+        const q = document.getElementById('entry-link-search')?.value?.trim() || '';
+        const ul = document.getElementById('entry-link-results');
+        if (!ul) return;
+        if (q.length < 2) {
+            App.toast('Digite pelo menos 2 caracteres', 'warning');
+            return;
+        }
+        try {
+            const res = await API.leads.list({ search: q, limit: 15 });
+            const leads = res.data?.leads || [];
+            const pid = this._entryLinkProvisionalId;
+            ul.innerHTML = leads
+                .filter((l) => l.id !== pid)
+                .map(
+                    (l) =>
+                        `<li class="rounded-lg border border-slate-100 p-2 hover:bg-slate-50">
+                            <button type="button" class="entry-link-pick w-full text-left text-sm" data-target-id="${l.id}">
+                                <span class="font-medium text-slate-900">${this.escapeHtml(l.name)}</span>
+                                <span class="mt-0.5 block text-xs text-slate-500">${this.escapeHtml(
+                                    String(l.phone || l.phone_normalized || '')
+                                )} · ${this.escapeHtml(l.stage_name || '')}</span>
+                            </button>
+                        </li>`
+                )
+                .join('');
+            ul.querySelectorAll('.entry-link-pick').forEach((btn) => {
+                btn.addEventListener('click', async () => {
+                    const tid = parseInt(btn.getAttribute('data-target-id'), 10);
+                    await this.submitEntryLink(tid);
+                });
+            });
+        } catch (err) {
+            console.error(err);
+            App.toast('Erro na busca', 'error');
+        }
+    },
+
+    async submitEntryLink(targetLeadId) {
+        const pid = this._entryLinkProvisionalId;
+        if (!pid) return;
+        try {
+            const res = await API.leads.linkExisting(pid, targetLeadId);
+            if (res.success) {
+                App.toast(res.message || 'Leads unificados', 'success');
+                this.closeEntryLinkModal();
+                await this.loadData();
+            } else {
+                App.toast(res.message || 'Nao foi possivel vincular', 'error');
+            }
+        } catch (e) {
+            console.error(e);
+            App.toast(e.data?.message || e.message || 'Erro ao vincular', 'error');
+        }
+    },
+
+    async openEntryAcceptModal(provisionalId) {
+        this._entryAcceptProvisionalId = provisionalId;
+        const m = document.getElementById('entry-accept-modal');
+        const nameEl = document.getElementById('entry-accept-name');
+        const phoneEl = document.getElementById('entry-accept-phone');
+        if (phoneEl) phoneEl.value = '';
+        let name = '';
+        try {
+            const res = await API.leads.get(provisionalId);
+            if (res.success && res.data?.lead) {
+                name = res.data.lead.name || '';
+            }
+        } catch (e) {
+            /* ignore */
+        }
+        if (nameEl) nameEl.value = name;
+        if (m) {
+            m.classList.remove('hidden');
+            m.classList.add('flex');
+            m.setAttribute('aria-hidden', 'false');
+        }
+        requestAnimationFrame(() => phoneEl?.focus());
+    },
+
+    closeEntryAcceptModal() {
+        this._entryAcceptProvisionalId = null;
+        const m = document.getElementById('entry-accept-modal');
+        if (!m) return;
+        if (m.contains(document.activeElement) && typeof document.activeElement.blur === 'function') {
+            document.activeElement.blur();
+        }
+        m.setAttribute('aria-hidden', 'true');
+        m.classList.add('hidden');
+        m.classList.remove('flex');
+    },
+
+    async submitEntryAccept() {
+        const id = this._entryAcceptProvisionalId;
+        if (!id) return;
+        const name = document.getElementById('entry-accept-name')?.value?.trim() || '';
+        const phone = document.getElementById('entry-accept-phone')?.value?.trim() || '';
+        if (!phone) {
+            App.toast('Telefone obrigatorio', 'warning');
+            return;
+        }
+        try {
+            const res = await API.leads.acceptEntry(id, { phone, name: name || undefined });
+            if (res.success) {
+                App.toast(res.message || 'Lead aceito', 'success');
+                this.closeEntryAcceptModal();
+                await this.loadData();
+            } else {
+                App.toast(res.message || 'Nao foi possivel aceitar', 'error');
+            }
+        } catch (e) {
+            console.error(e);
+            App.toast(e.data?.message || e.message || 'Erro ao salvar', 'error');
+        }
+    },
+
+    async confirmDiscardEntry(id) {
+        if (!confirm('Descartar este lead de entrada? A conversa sera encerrada.')) return;
+        try {
+            const res = await API.leads.discardEntry(id);
+            if (res.success) {
+                App.toast(res.message || 'Lead descartado', 'success');
+                await this.loadData();
+            } else {
+                App.toast(res.message || 'Nao foi possivel descartar', 'error');
+            }
+        } catch (e) {
+            console.error(e);
+            App.toast(e.data?.message || e.message || 'Erro ao descartar', 'error');
+        }
     },
 
     initLeadModal() {
@@ -301,6 +546,7 @@ const Kanban = {
 
         this.columns.forEach((column) => {
             let leads = column.leads;
+            const isEntryColumn = column.stage?.stage_type === 'entry';
 
             if (search) {
                 const searchLower = search.toLowerCase();
@@ -323,6 +569,7 @@ const Kanban = {
             const colEl = this.createColumn(column.stage, leads, sumVisible, {
                 totalInStage,
                 clientFilter,
+                isEntryColumn,
             });
             board.appendChild(colEl);
         });
@@ -330,15 +577,20 @@ const Kanban = {
 
     createColumn(stage, leads, totalValue, meta = {}) {
         const column = document.createElement('div');
+        const isEntry = !!meta.isEntryColumn;
         column.className =
-            'kanban-column flex w-[300px] shrink-0 flex-col rounded-xl bg-slate-100 max-h-full transition-[box-shadow] duration-150 sm:w-[320px]';
+            'kanban-column flex w-[300px] shrink-0 flex-col rounded-xl bg-slate-100 max-h-full transition-[box-shadow] duration-150 sm:w-[320px]' +
+            (isEntry ? ' ring-2 ring-amber-400/80 ring-offset-2 ring-offset-slate-50' : '');
         column.setAttribute('data-kanban-column', '1');
         column.setAttribute('data-stage-id', String(stage.id));
+        if (isEntry) {
+            column.setAttribute('data-kanban-no-drop', '1');
+        }
 
         const totalInStage = meta.totalInStage ?? leads.length;
         const badge = meta.clientFilter ? `${leads.length} visiveis` : `${totalInStage}`;
 
-        const cardsHtml = leads.map((lead) => this.renderLeadCard(lead, stage.id)).join('');
+        const cardsHtml = leads.map((lead) => this.renderLeadCard(lead, stage.id, { isEntryColumn: isEntry })).join('');
 
         column.innerHTML = `
             <div class="flex shrink-0 items-center justify-between border-b border-slate-200/80 px-3 py-3">
@@ -349,8 +601,10 @@ const Kanban = {
                 <span class="shrink-0 rounded-full bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-600" title="Leads nesta etapa">${badge}</span>
             </div>
             <div class="border-b border-slate-200/80 px-3 py-2 text-xs text-slate-500">Soma (visivel): ${this.formatCurrency(totalValue)}</div>
-            <div class="kanban-column-scroll min-h-0 flex-1 space-y-2 overflow-y-auto p-3">${cardsHtml || '<p class="text-center text-xs text-slate-400">Vazio</p>'}</div>
+            <div class="kanban-column-scroll flex-1 min-h-[120px] space-y-2 overflow-y-auto overflow-x-hidden p-3">${cardsHtml || '<p class="text-center text-xs text-slate-400">Vazio</p>'}</div>
         `;
+
+        this.bindColumnDragAndDrop(column);
 
         column.querySelectorAll('.kanban-wa-btn').forEach((btn) => {
             btn.addEventListener('click', async (e) => {
@@ -364,16 +618,46 @@ const Kanban = {
         return column;
     },
 
-    renderLeadCard(lead, stageId) {
-        const isOverdue = lead.next_action_at && new Date(lead.next_action_at) < new Date();
+    renderLeadCard(lead, stageId, cardMeta = {}) {
+        const isEntry = !!cardMeta.isEntryColumn;
+        const isOverdue = !isEntry && lead.next_action_at && new Date(lead.next_action_at) < new Date();
         const cardClasses = [
             'kanban-card rounded-lg border border-slate-200 bg-white p-3 shadow-sm transition hover:border-primary-300 hover:shadow-md',
             'cursor-grab active:cursor-grabbing select-none',
         ];
         if (isOverdue) cardClasses.push('border-l-4 border-l-red-500');
-        if (lead.temperature === 'hot') cardClasses.push('border-l-4 border-l-amber-500');
+        if (!isEntry && lead.temperature === 'hot') cardClasses.push('border-l-4 border-l-amber-500');
+        if (isEntry) cardClasses.push('border-amber-200 bg-amber-50/40');
 
-        const hasWa = !!(lead.phone_normalized || (lead.phone && String(lead.phone).replace(/\D/g, '').length >= 8));
+        let waStatusPill = '';
+        if (!isEntry) {
+            try {
+                const meta = lead.metadata_json
+                    ? typeof lead.metadata_json === 'string'
+                        ? JSON.parse(lead.metadata_json)
+                        : lead.metadata_json
+                    : {};
+                if (Number(lead.pending_identity_resolution) === 1) {
+                    waStatusPill =
+                        '<span class="mt-1 inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 ring-1 ring-amber-200 bg-amber-50">Aguardando vinculacao</span>';
+                } else if (meta.whatsapp_status === 'not_found') {
+                    waStatusPill =
+                        '<span class="mt-1 inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold text-red-700 ring-1 ring-red-200 bg-red-50">Sem WhatsApp</span>';
+                } else if (meta.whatsapp_jid) {
+                    waStatusPill =
+                        '<span class="mt-1 inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-200 bg-emerald-50">WA ok</span>';
+                }
+            } catch (err) {
+                /* ignore */
+            }
+        } else {
+            waStatusPill =
+                '<span class="mt-1 inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 ring-1 ring-amber-200 bg-amber-100">Triagem</span>';
+        }
+
+        const hasWa =
+            !isEntry &&
+            !!(lead.phone_normalized || (lead.phone && String(lead.phone).replace(/\D/g, '').length >= 8));
 
         const tags = lead.tag_labels
             ? lead.tag_labels
@@ -402,6 +686,19 @@ const Kanban = {
             ? `<div class="mt-1 line-clamp-2 text-[11px] leading-snug text-slate-600" title="${this.escapeHtml(lead.product_interest)}">Prod.: ${this.escapeHtml(lead.product_interest)}</div>`
             : '';
 
+        const previewLine =
+            isEntry && lead.inbox_preview
+                ? `<div class="mt-1 line-clamp-2 rounded bg-white/80 px-2 py-1 text-[11px] text-slate-600 ring-1 ring-amber-100">${this.escapeHtml(lead.inbox_preview)}</div>`
+                : '';
+
+        const entryActions = isEntry
+            ? `<div class="mt-2 flex flex-wrap gap-1">
+                <button type="button" class="entry-btn-link rounded-md bg-white px-2 py-1 text-[11px] font-medium text-primary-700 ring-1 ring-primary-200 hover:bg-primary-50" data-lead-id="${lead.id}">Vincular</button>
+                <button type="button" class="entry-btn-accept rounded-md bg-white px-2 py-1 text-[11px] font-medium text-slate-800 ring-1 ring-slate-200 hover:bg-slate-50" data-lead-id="${lead.id}">Aceitar</button>
+                <button type="button" class="entry-btn-discard rounded-md bg-white px-2 py-1 text-[11px] font-medium text-red-700 ring-1 ring-red-200 hover:bg-red-50" data-lead-id="${lead.id}">Descartar</button>
+            </div>`
+            : '';
+
         const tagPills = tags
             .map(
                 (t) =>
@@ -418,10 +715,13 @@ const Kanban = {
         return `
             <div class="${cardClasses.join(' ')}" data-lead-id="${lead.id}" data-stage-id="${stageId}" draggable="true">
                 <div class="text-sm font-semibold leading-snug text-slate-900">${this.escapeHtml(lead.name)}</div>
+                ${waStatusPill}
                 ${phoneLine}
                 ${emailLine}
                 ${sourceLine}
                 ${productLine}
+                ${previewLine}
+                ${entryActions}
                 ${tagRow}
                 <div class="mt-2 text-sm font-medium text-slate-700">${this.formatCurrency(lead.value)}</div>
                 <div class="mt-2 flex items-center justify-between gap-2 border-t border-slate-100 pt-2">
@@ -460,23 +760,19 @@ const Kanban = {
     async runWhatsAppTrigger(leadId, payload = {}) {
         try {
             const res = await API.leads.triggerWhatsApp(leadId, payload);
-            if (res.success && res.data?.whatsapp_link) {
-                window.open(res.data.whatsapp_link, '_blank', 'noopener,noreferrer');
-                App.toast(res.message || 'WhatsApp aberto', 'success');
-                // Pipeline pode mover o lead automaticamente (ex.: etapa inicial -> intermediaria)
-                await this.loadData();
-                const modal = document.getElementById('lead-detail-modal');
-                const openId = modal?.dataset?.leadId ? parseInt(modal.dataset.leadId, 10) : null;
-                if (modal && !modal.classList.contains('hidden') && openId === leadId) {
-                    await this.openLeadDetail(leadId);
-                }
+            if (res.success && res.data?.conversation_id) {
+                const msg = res.data?.inbox_only
+                    ? res.message || 'Abrindo inbox'
+                    : res.message || 'Mensagem enviada';
+                App.toast(msg, 'success');
+                window.location.href = '/inbox#conv-' + encodeURIComponent(String(res.data.conversation_id));
                 return res;
             }
-            App.toast(res.message || 'Nao foi possivel abrir o WhatsApp', 'error');
+            App.toast(res.message || 'Nao foi possivel enviar pelo WhatsApp', 'error');
             return res;
         } catch (err) {
             console.error(err);
-            App.toast('Erro ao contactar o servidor', 'error');
+            App.toast(err.message || err.data?.message || 'Erro ao contactar o servidor', 'error');
             return null;
         }
     },
@@ -552,12 +848,25 @@ const Kanban = {
             const lead = leadRes.data.lead;
             const events = evRes.success && evRes.data?.events ? evRes.data.events : [];
 
+            let stages = [];
+            if (lead.pipeline_id) {
+                try {
+                    const pRes = await API.pipelines.get(lead.pipeline_id);
+                    if (pRes.success && Array.isArray(pRes.data?.pipeline?.stages)) {
+                        stages = pRes.data.pipeline.stages;
+                    }
+                } catch (pe) {
+                    console.warn(pe);
+                }
+            }
+
             title.textContent = lead.name;
             subtitle.textContent = [lead.pipeline_name, lead.stage_name].filter(Boolean).join(' · ') || '';
 
             this.setupLeadDetailToolbar(lead);
-            body.innerHTML = this.buildLeadDetailHtml(lead, events);
+            body.innerHTML = this.buildLeadDetailHtml(lead, events, stages);
             this.initLeadDetailTabs(body);
+            this.initLeadDetailStageMover(body, lead, stages);
             this.initLeadDetailFollowUp(body, lead);
             this.initLeadDetailEditForm(body, lead);
         } catch (error) {
@@ -588,6 +897,13 @@ const Kanban = {
             if (editBar) {
                 editBar.classList.toggle('hidden', name !== 'summary');
             }
+
+            const leadId = parseInt(document.getElementById('lead-detail-modal')?.dataset?.leadId || '0', 10);
+            if (name === 'chat' && leadId) {
+                this.startLeadChat(leadId, bodyEl);
+            } else {
+                this.stopLeadChat();
+            }
         };
 
         tabs.forEach((t) => {
@@ -603,6 +919,83 @@ const Kanban = {
         });
 
         activate('summary');
+    },
+
+    stopLeadChat() {
+        if (this.leadChatPollId) {
+            clearInterval(this.leadChatPollId);
+            this.leadChatPollId = null;
+        }
+    },
+
+    async startLeadChat(leadId, bodyEl) {
+        this.stopLeadChat();
+        const statusEl = bodyEl.querySelector('#lead-chat-status');
+        const box = bodyEl.querySelector('#lead-chat-messages');
+        const inp = bodyEl.querySelector('#lead-chat-input');
+        const btn = bodyEl.querySelector('#lead-chat-send');
+        const form = bodyEl.querySelector('#lead-chat-form');
+
+        const render = async () => {
+            try {
+                const convRes = await API.get(`/api/conversations/by-lead/${leadId}`);
+                const conv = convRes.data?.conversation;
+                if (!conv || !conv.id) {
+                    if (statusEl) statusEl.textContent = 'Nenhuma conversa WhatsApp vinculada a este lead.';
+                    if (box) box.innerHTML = '';
+                    if (inp) inp.disabled = true;
+                    if (btn) btn.disabled = true;
+                    return;
+                }
+                if (statusEl) statusEl.textContent = `Conversa #${conv.id} · ${conv.contact_phone || ''}`;
+                if (inp) inp.disabled = false;
+                if (btn) btn.disabled = false;
+
+                const msgRes = await API.get(`/api/conversations/${conv.id}/messages`);
+                const msgs = msgRes.data?.messages || [];
+                if (box) {
+                    if (!msgs.length) {
+                        box.innerHTML = '<p class="text-xs text-slate-500">Sem mensagens ainda.</p>';
+                    } else {
+                        box.innerHTML = msgs
+                            .map((m) => {
+                                const out = m.direction === 'outbound';
+                                const media =
+                                    m.media_url && String(m.media_url).startsWith('http')
+                                        ? `<div class="mt-1"><a href="${this.escapeHtml(m.media_url)}" target="_blank" rel="noopener" class="text-xs text-primary-600 underline">Midia</a></div>`
+                                        : '';
+                                return `<div class="flex ${out ? 'justify-end' : 'justify-start'}"><div class="max-w-[90%] rounded-xl px-2 py-1.5 text-xs ${out ? 'bg-primary-600 text-white' : 'bg-slate-100 text-slate-800'}">${this.escapeHtml(m.content || '')}${media}</div></div>`;
+                            })
+                            .join('');
+                        box.scrollTop = box.scrollHeight;
+                    }
+                }
+                bodyEl.dataset.chatConversationId = String(conv.id);
+            } catch (e) {
+                console.warn(e);
+                if (statusEl) statusEl.textContent = 'Erro ao carregar chat.';
+            }
+        };
+
+        await render();
+        this.leadChatPollId = setInterval(render, 5000);
+
+        if (form && !form.dataset.bound) {
+            form.dataset.bound = '1';
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const cid = bodyEl.dataset.chatConversationId;
+                const text = (inp?.value || '').trim();
+                if (!cid || !text) return;
+                try {
+                    await API.post(`/api/conversations/${cid}/messages`, { text });
+                    inp.value = '';
+                    await render();
+                } catch (err) {
+                    alert(err.message || 'Erro ao enviar');
+                }
+            });
+        }
     },
 
     async refreshLeadDetailEvents(leadId, bodyEl) {
@@ -967,7 +1360,45 @@ const Kanban = {
         }
     },
 
-    buildLeadDetailHtml(lead, events) {
+    initLeadDetailStageMover(bodyEl, lead, stages) {
+        if (!stages || !stages.length) return;
+        const sel = bodyEl.querySelector('#lead-detail-stage-select');
+        const btn = bodyEl.querySelector('#lead-detail-stage-apply');
+        const leadId = lead.id;
+        if (!sel || !btn || !leadId) return;
+
+        btn.addEventListener('click', async () => {
+            const newId = parseInt(sel.value, 10);
+            const curId = parseInt(String(lead.stage_id ?? '0'), 10);
+            if (!newId) {
+                App.toast('Etapa invalida', 'warning');
+                return;
+            }
+            if (newId === curId) {
+                App.toast('O lead ja esta nesta etapa', 'info');
+                return;
+            }
+            btn.disabled = true;
+            try {
+                const res = await API.leads.moveStage(leadId, newId);
+                if (res.success) {
+                    App.toast(res.message || 'Etapa atualizada', 'success');
+                    if (document.querySelector('.kanban-page')) {
+                        await this.loadData();
+                    }
+                    await this.openLeadDetail(leadId);
+                } else {
+                    App.toast(res.message || 'Nao foi possivel mover', 'error');
+                }
+            } catch (e) {
+                App.toast(e.message || e.data?.message || 'Erro ao mover etapa', 'error');
+            } finally {
+                btn.disabled = false;
+            }
+        });
+    },
+
+    buildLeadDetailHtml(lead, events, stages = []) {
         const statusBadge = () => {
             const s = lead.status || 'active';
             if (s === 'won')
@@ -1210,9 +1641,36 @@ const Kanban = {
             </div>
         `;
 
-        // Nova aba Acoes - WhatsApp, observacoes e registro de acoes
+        const stageOpts = (stages || [])
+            .slice()
+            .sort((a, b) => (parseInt(a.position, 10) || 0) - (parseInt(b.position, 10) || 0))
+            .map((s) => {
+                const sid = String(s.id);
+                const cur = String(lead.stage_id ?? '');
+                const sel = sid === cur ? ' selected' : '';
+                return `<option value="${sid}"${sel}>${this.escapeHtml(s.name || '')}</option>`;
+            })
+            .join('');
+
+        const stageMoverBlock =
+            stages && stages.length
+                ? `<div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <div class="text-[11px] font-semibold uppercase tracking-wide text-slate-600">Mover de etapa</div>
+                    <p class="mt-1 text-xs leading-relaxed text-slate-500">Escolha a coluna do Kanban. Não há bloqueio por ordem de etapa; automações configuradas para “mudança de etapa” continuam sendo disparadas.</p>
+                    <div class="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-3">
+                        <div class="min-w-0 flex-1">
+                            <label class="block text-xs font-medium text-slate-700" for="lead-detail-stage-select">Etapa</label>
+                            <select id="lead-detail-stage-select" class="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500">${stageOpts}</select>
+                        </div>
+                        <button type="button" id="lead-detail-stage-apply" class="inline-flex shrink-0 items-center justify-center rounded-lg bg-primary-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-primary-700">Aplicar</button>
+                    </div>
+                </div>`
+                : '';
+
+        // Nova aba Acoes - etapa, WhatsApp, observacoes e registro de acoes
         const actionsSection = `
-            <div data-detail-panel="actions" class="hidden text-slate-900">
+            <div data-detail-panel="actions" class="hidden space-y-4 text-slate-900">
+                ${stageMoverBlock}
                 <div class="grid gap-4 lg:grid-cols-5">
                     <div class="space-y-4 lg:col-span-2">
                         ${followUpWhatsapp}
@@ -1232,13 +1690,25 @@ const Kanban = {
             </div>
         `;
 
+        const chatSection = `
+            <div data-detail-panel="chat" class="hidden flex min-h-[320px] flex-col text-slate-900">
+                <div id="lead-chat-status" class="mb-2 text-xs text-slate-500">Carregando chat...</div>
+                <div id="lead-chat-messages" class="mb-3 max-h-72 flex-1 space-y-2 overflow-y-auto rounded-xl border border-slate-200 bg-white p-3 text-sm"></div>
+                <form id="lead-chat-form" class="flex flex-col gap-2 sm:flex-row">
+                    <textarea id="lead-chat-input" rows="2" class="min-w-0 flex-1 resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20" placeholder="Mensagem..." disabled></textarea>
+                    <button type="submit" id="lead-chat-send" class="shrink-0 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 disabled:opacity-50" disabled>Enviar</button>
+                </form>
+            </div>
+        `;
+
         return `
             <div class="px-3 pb-4 pt-3 sm:px-4 sm:pb-5">
                 <div class="sticky top-0 z-20 -mx-0.5 mb-3 space-y-2 rounded-xl bg-slate-50/95 p-2 pb-2.5 shadow-sm ring-1 ring-slate-200/80 backdrop-blur-sm">
                     <div class="flex gap-1 rounded-xl bg-slate-200/60 p-1 shadow-inner ring-1 ring-slate-200/80" role="tablist" aria-label="Secoes do lead">
-                        <button type="button" role="tab" data-detail-tab="summary" class="flex-1 rounded-xl px-3 py-2.5 text-sm font-medium transition">Resumo</button>
-                        <button type="button" role="tab" data-detail-tab="actions" class="flex-1 rounded-xl px-3 py-2.5 text-sm font-medium transition">Acoes</button>
-                        <button type="button" role="tab" data-detail-tab="history" class="flex-1 rounded-xl px-3 py-2.5 text-sm font-medium transition">Historico</button>
+                        <button type="button" role="tab" data-detail-tab="summary" class="flex-1 rounded-xl px-2 py-2.5 text-xs font-medium transition sm:text-sm">Resumo</button>
+                        <button type="button" role="tab" data-detail-tab="actions" class="flex-1 rounded-xl px-2 py-2.5 text-xs font-medium transition sm:text-sm">Acoes</button>
+                        <button type="button" role="tab" data-detail-tab="history" class="flex-1 rounded-xl px-2 py-2.5 text-xs font-medium transition sm:text-sm">Historico</button>
+                        <button type="button" role="tab" data-detail-tab="chat" class="flex-1 rounded-xl px-2 py-2.5 text-xs font-medium transition sm:text-sm">Chat</button>
                     </div>
                     <div id="lead-detail-edit-bar" class="flex flex-wrap items-center justify-end gap-2 px-0.5">
                         <button type="button" id="lead-detail-btn-cancel-top" class="hidden rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50">Cancelar</button>
@@ -1248,6 +1718,7 @@ const Kanban = {
                 ${summarySection}
                 ${actionsSection}
                 ${historySection}
+                ${chatSection}
             </div>`;
     },
 
@@ -1342,6 +1813,7 @@ const Kanban = {
     },
 
     closeLeadDetail() {
+        this.stopLeadChat();
         const modal = document.getElementById('lead-detail-modal');
         if (!modal) return;
         modal.classList.add('hidden');

@@ -2,37 +2,40 @@
 
 namespace App\Controllers;
 
+use App\Core\App;
 use App\Core\Request;
 use App\Core\Response;
-use App\Core\Database;
-use App\Core\App;
+use App\Core\Session;
+use App\Core\TenantAwareDatabase;
 
 class UserController
 {
     public function index(Request $request, Response $response): void
     {
-        $users = Database::fetchAll(
+        $users = TenantAwareDatabase::fetchAll(
             "SELECT id, name, email, role, status, phone, created_at 
              FROM users 
-             WHERE deleted_at IS NULL 
-             ORDER BY created_at DESC"
+             WHERE deleted_at IS NULL AND tenant_id = :tenant_id
+             ORDER BY created_at DESC",
+            TenantAwareDatabase::mergeTenantParams()
         );
 
         $response->view('users.index', [
             'title' => 'Usuarios',
             'pageTitle' => 'Gerenciamento de Usuarios',
-            'users' => $users
+            'users' => $users,
         ]);
     }
 
     public function apiList(Request $request, Response $response): void
     {
         try {
-            $users = Database::fetchAll(
+            $users = TenantAwareDatabase::fetchAll(
                 "SELECT id, name, email, role, status, phone, created_at 
                  FROM users 
-                 WHERE deleted_at IS NULL 
-                 ORDER BY created_at DESC"
+                 WHERE deleted_at IS NULL AND tenant_id = :tenant_id
+                 ORDER BY created_at DESC",
+                TenantAwareDatabase::mergeTenantParams()
             );
 
             $response->jsonSuccess(['users' => $users]);
@@ -48,19 +51,21 @@ class UserController
 
         if (!$id) {
             $response->jsonError('ID nao fornecido', 400);
+
             return;
         }
 
         try {
-            $user = Database::fetch(
+            $user = TenantAwareDatabase::fetch(
                 "SELECT id, name, email, role, status, phone, created_at 
                  FROM users 
-                 WHERE id = :id AND deleted_at IS NULL",
-                [':id' => $id]
+                 WHERE id = :id AND deleted_at IS NULL AND tenant_id = :tenant_id",
+                TenantAwareDatabase::mergeTenantParams([':id' => $id])
             );
 
             if (!$user) {
                 $response->jsonError('Usuario nao encontrado', 404);
+
                 return;
             }
 
@@ -79,37 +84,45 @@ class UserController
                 'email' => 'required|email',
                 'password' => 'required|min:6',
                 'role' => 'required',
-                'phone' => ''
+                'phone' => '',
             ]);
         } catch (\InvalidArgumentException $e) {
             $errors = json_decode($e->getMessage(), true);
             $response->jsonError('Dados invalidos', 422, $errors);
+
             return;
         }
 
-        $existing = Database::fetch(
-            "SELECT id FROM users WHERE email = :email AND deleted_at IS NULL",
-            [':email' => $data['email']]
+        if (($data['role'] ?? '') === 'superadmin' && (string) (Session::user()['role'] ?? '') !== 'superadmin') {
+            $response->jsonError('Perfil invalido', 422);
+
+            return;
+        }
+
+        $existing = TenantAwareDatabase::fetch(
+            'SELECT id FROM users WHERE email = :email AND deleted_at IS NULL AND tenant_id = :tenant_id',
+            TenantAwareDatabase::mergeTenantParams([':email' => $data['email']])
         );
 
         if ($existing) {
             $response->jsonError('Este email ja esta em uso', 422, ['email' => ['Email ja cadastrado']]);
+
             return;
         }
 
         try {
-            $userId = Database::insert('users', [
+            $userId = TenantAwareDatabase::insert('users', [
                 'name' => $data['name'],
                 'email' => $data['email'],
                 'password_hash' => password_hash($data['password'], PASSWORD_BCRYPT),
                 'role' => $data['role'],
                 'phone' => $data['phone'] ?? null,
-                'status' => 'active'
+                'status' => 'active',
             ]);
 
-            $user = Database::fetch(
-                "SELECT id, name, email, role, status, phone, created_at FROM users WHERE id = :id",
-                [':id' => $userId]
+            $user = TenantAwareDatabase::fetch(
+                'SELECT id, name, email, role, status, phone, created_at FROM users WHERE id = :id AND tenant_id = :tenant_id',
+                TenantAwareDatabase::mergeTenantParams([':id' => $userId])
             );
 
             App::log("Usuario criado: {$user['email']}");
@@ -127,6 +140,7 @@ class UserController
 
         if (!$id) {
             $response->jsonError('ID nao fornecido', 400);
+
             return;
         }
 
@@ -134,16 +148,24 @@ class UserController
 
         if (empty($data)) {
             $response->jsonError('Dados nao fornecidos', 400);
+
             return;
         }
 
-        $user = Database::fetch(
-            "SELECT id FROM users WHERE id = :id AND deleted_at IS NULL",
-            [':id' => $id]
+        if (isset($data['role']) && $data['role'] === 'superadmin' && (string) (Session::user()['role'] ?? '') !== 'superadmin') {
+            $response->jsonError('Perfil invalido', 422);
+
+            return;
+        }
+
+        $user = TenantAwareDatabase::fetch(
+            'SELECT id FROM users WHERE id = :id AND deleted_at IS NULL AND tenant_id = :tenant_id',
+            TenantAwareDatabase::mergeTenantParams([':id' => $id])
         );
 
         if (!$user) {
             $response->jsonError('Usuario nao encontrado', 404);
+
             return;
         }
 
@@ -154,13 +176,14 @@ class UserController
         }
 
         if (isset($data['email'])) {
-            $existing = Database::fetch(
-                "SELECT id FROM users WHERE email = :email AND id != :id AND deleted_at IS NULL",
-                [':email' => $data['email'], ':id' => $id]
+            $existing = TenantAwareDatabase::fetch(
+                'SELECT id FROM users WHERE email = :email AND id != :id AND deleted_at IS NULL AND tenant_id = :tenant_id',
+                TenantAwareDatabase::mergeTenantParams([':email' => $data['email'], ':id' => $id])
             );
 
             if ($existing) {
                 $response->jsonError('Este email ja esta em uso', 422);
+
                 return;
             }
 
@@ -185,15 +208,16 @@ class UserController
 
         if (empty($updateData)) {
             $response->jsonError('Nenhum dado para atualizar', 400);
+
             return;
         }
 
         try {
-            Database::update('users', $updateData, 'id = :id', [':id' => $id]);
+            TenantAwareDatabase::update('users', $updateData, 'id = :id', [':id' => $id]);
 
-            $user = Database::fetch(
-                "SELECT id, name, email, role, status, phone, created_at FROM users WHERE id = :id",
-                [':id' => $id]
+            $user = TenantAwareDatabase::fetch(
+                'SELECT id, name, email, role, status, phone, created_at FROM users WHERE id = :id AND tenant_id = :tenant_id',
+                TenantAwareDatabase::mergeTenantParams([':id' => $id])
             );
 
             App::log("Usuario atualizado: {$user['email']}");
@@ -211,21 +235,23 @@ class UserController
 
         if (!$id) {
             $response->jsonError('ID nao fornecido', 400);
+
             return;
         }
 
-        $user = Database::fetch(
-            "SELECT id, email FROM users WHERE id = :id AND deleted_at IS NULL",
-            [':id' => $id]
+        $user = TenantAwareDatabase::fetch(
+            'SELECT id, email FROM users WHERE id = :id AND deleted_at IS NULL AND tenant_id = :tenant_id',
+            TenantAwareDatabase::mergeTenantParams([':id' => $id])
         );
 
         if (!$user) {
             $response->jsonError('Usuario nao encontrado', 404);
+
             return;
         }
 
         try {
-            Database::update('users', ['deleted_at' => date('Y-m-d H:i:s')], 'id = :id', [':id' => $id]);
+            TenantAwareDatabase::update('users', ['deleted_at' => date('Y-m-d H:i:s')], 'id = :id', [':id' => $id]);
 
             App::log("Usuario excluido: {$user['email']}");
 

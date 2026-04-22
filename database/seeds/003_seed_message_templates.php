@@ -54,8 +54,8 @@ return [
         ];
         
         $stmt = $db->prepare("INSERT INTO message_templates 
-            (name, slug, channel, stage_type, content, variables) 
-            VALUES (:name, :slug, :channel, :stage_type, :content, :variables)");
+            (tenant_id, name, slug, channel, stage_type, content, variables) 
+            VALUES (1, :name, :slug, :channel, :stage_type, :content, :variables)");
         
         foreach ($templates as $template) {
             $stmt->execute([

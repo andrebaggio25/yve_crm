@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?= $title ?? 'Yve CRM' ?> - Gestao de Leads</title>
     <?= App\Core\Session::csrfMeta() ?>
-    <link rel="stylesheet" href="/assets/css/app.css">
+    <link rel="stylesheet" href="/assets/css/app.css?v=<?= filemtime(__DIR__ . '/../../../public/assets/css/app.css') ?>">
 </head>
 <body class="min-h-full bg-slate-50 text-slate-900">
     <div class="flex min-h-screen">
@@ -27,12 +27,13 @@
 
     <?php include __DIR__ . '/../partials/lead-detail-modal.php'; ?>
 
-    <script src="/assets/js/app.js"></script>
-    <script src="/assets/js/api.js"></script>
+    <script src="/assets/js/app.js?v=<?= filemtime(__DIR__ . '/../../../public/assets/js/app.js') ?>"></script>
+    <script src="/assets/js/api.js?v=<?= filemtime(__DIR__ . '/../../../public/assets/js/api.js') ?>"></script>
 
     <?php if (isset($scripts)): ?>
         <?php foreach ($scripts as $script): ?>
-            <script src="/assets/js/<?= $script ?>.js"></script>
+            <?php $scriptFile = __DIR__ . '/../../../public/assets/js/' . $script . '.js'; ?>
+            <script src="/assets/js/<?= $script ?>.js?v=<?= file_exists($scriptFile) ? filemtime($scriptFile) : time() ?>"></script>
         <?php endforeach; ?>
     <?php endif; ?>
 </body>

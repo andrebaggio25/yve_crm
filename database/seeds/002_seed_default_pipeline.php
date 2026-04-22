@@ -9,8 +9,8 @@ return [
             return ['message' => 'Pipeline padrao ja existe', 'skipped' => true];
         }
         
-        $stmt = $db->prepare("INSERT INTO pipelines (name, description, is_active, is_default) 
-                             VALUES (:name, :description, :is_active, :is_default)");
+        $stmt = $db->prepare("INSERT INTO pipelines (tenant_id, name, description, is_active, is_default) 
+                             VALUES (1, :name, :description, :is_active, :is_default)");
         
         $stmt->execute([
             ':name' => 'Esteira Principal',
@@ -32,8 +32,8 @@ return [
         ];
         
         $stmt = $db->prepare("INSERT INTO pipeline_stages 
-            (pipeline_id, name, slug, stage_type, color_token, position, is_default, is_final, win_probability) 
-            VALUES (:pipeline_id, :name, :slug, :type, :color, :position, :default, :final, :probability)");
+            (tenant_id, pipeline_id, name, slug, stage_type, color_token, position, is_default, is_final, win_probability) 
+            VALUES (1, :pipeline_id, :name, :slug, :type, :color, :position, :default, :final, :probability)");
         
         foreach ($stages as $stage) {
             $stmt->execute([

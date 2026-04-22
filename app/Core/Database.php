@@ -13,15 +13,23 @@ class Database
     {
         if (self::$instance === null) {
             $config = require __DIR__ . '/../../config/database.php';
-            
+
             $dsn = "mysql:host={$config['host']};dbname={$config['database']};charset={$config['charset']}";
-            
+
+            $charset = (string) ($config['charset'] ?? 'utf8mb4');
+            $collation = (string) ($config['collation'] ?? 'utf8mb4_unicode_ci');
+
+            $options = $config['options'] ?? [];
+            // Garante que a sessao MySQL use a mesma collation das tabelas, evitando
+            // `Illegal mix of collations` em LIKE/JOINs com parametros vindos do PHP.
+            $options[\PDO::MYSQL_ATTR_INIT_COMMAND] = "SET NAMES {$charset} COLLATE {$collation}";
+
             try {
                 self::$instance = new PDO(
                     $dsn,
                     $config['username'],
                     $config['password'],
-                    $config['options']
+                    $options
                 );
             } catch (PDOException $e) {
                 error_log("Database connection failed: " . $e->getMessage());

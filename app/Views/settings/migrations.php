@@ -66,8 +66,11 @@ $pageTitle = 'Migrations';
                         <td class="px-3 py-3 font-mono text-xs"><?= htmlspecialchars($migration['name']) ?></td>
                         <td class="hidden max-w-xs px-3 py-3 text-slate-600 md:table-cell">
                             <?php
-                            $migrationFile = require \App\Core\App::databasePath('migrations/' . $migration['name']);
-                            echo htmlspecialchars($migrationFile['description'] ?? '-');
+                            // Extrair descricao do nome do arquivo (ex: 001_create_users.php -> Create Users)
+                            $desc = str_replace(['_', '.php'], [' ', ''], $migration['name']);
+                            $desc = preg_replace('/^\d+\s*/', '', $desc); // Remove numero inicial
+                            $desc = ucwords(trim($desc));
+                            echo htmlspecialchars($desc ?: '-');
                             ?>
                         </td>
                         <td class="px-3 py-3">
