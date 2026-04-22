@@ -14,7 +14,7 @@
         <div class="flex min-w-0 flex-1 flex-col pb-16 md:pb-0">
             <?php include __DIR__ . '/../partials/header.php'; ?>
 
-            <main class="flex-1 px-4 py-4 sm:px-6 lg:px-8">
+            <main class="min-w-0 max-w-full flex-1 px-4 py-4 sm:px-6 lg:px-8">
                 <?= $content ?>
             </main>
         </div>
