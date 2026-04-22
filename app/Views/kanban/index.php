@@ -1,6 +1,11 @@
 <?php
 $title = 'Kanban';
 $pageTitle = 'Leads / Kanban';
+/**
+ * Kanban: colunas com largura fixa (JS) + linha flex sem quebra. A rolagem horizontal fica no
+ * elemento #kanban-board (overflow-x-auto); a pagina inteira nao deve expandir em largura.
+ * Manter `w-full min-w-0` na page e no board alinhado a public/assets/js/kanban.js (renderBoard).
+ */
 ?>
 <div class="kanban-page -mx-4 flex min-h-[calc(100vh-7rem)] w-full min-w-0 flex-col sm:-mx-6 lg:-mx-8" data-pipeline-id="<?= (int) ($pipelineId ?? 1) ?>">
     <div class="flex flex-shrink-0 flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-4 py-3 sm:px-6">

@@ -1,6 +1,8 @@
 #!/bin/sh
 # Depois de cada commit na branch `hom`, envia automaticamente para origin/hom.
 # Em clone novo, uma vez, na raiz: git config core.hooksPath githooks
+# Nota: `main` e `hom` sao branches distintas; estar atualizado em uma nao implica na outra
+# (use git log hom..main / merge ou rebase conforme o fluxo do projeto).
 branch=$(git symbolic-ref --short HEAD 2>/dev/null) || exit 0
 [ "$branch" = "hom" ] || exit 0
 exec git push origin hom
