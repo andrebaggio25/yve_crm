@@ -538,7 +538,8 @@ const Kanban = {
         if (!board || !this.columns?.length) return;
 
         board.innerHTML = '';
-        board.className = 'kanban-board flex min-h-0 flex-1 gap-4 overflow-x-auto overflow-y-hidden bg-slate-50 px-4 py-4 sm:px-6';
+        board.className =
+            'kanban-board flex min-h-0 w-full min-w-0 flex-1 flex-nowrap gap-4 overflow-x-auto overflow-y-hidden overscroll-x-contain [scrollbar-gutter:stable] touch-pan-x bg-slate-50 px-4 py-4 sm:px-6';
 
         const search = document.getElementById('search-leads')?.value || '';
         const userId = document.getElementById('filter-user')?.value || '';
