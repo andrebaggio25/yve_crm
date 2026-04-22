@@ -51,6 +51,10 @@ $isActive = fn(string $needle) => strpos($currentPath, $needle) !== false;
                     <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
                     <?= htmlspecialchars(__('nav.tenants')) ?>
                 </a>
+                <a href="/superadmin/email" class="flex items-center gap-2 rounded-lg px-3 py-2 font-medium <?= strpos($currentPath, 'superadmin/email') !== false ? 'bg-amber-50 text-amber-700' : 'text-slate-600 hover:bg-slate-50' ?>">
+                    <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                    Fila e-mail
+                </a>
                 <a href="/superadmin/migrations" class="flex items-center gap-2 rounded-lg px-3 py-2 font-medium <?= strpos($currentPath, 'superadmin/migrations') !== false ? 'bg-amber-50 text-amber-700' : 'text-slate-600 hover:bg-slate-50' ?>">
                     <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg>
                     <?= htmlspecialchars(__('nav.migrations')) ?>

@@ -37,4 +37,12 @@ class MailService
     {
         return MailConfig::isConfigured();
     }
+
+    /**
+     * Se a fila pode ser enviada para este tenant (tenant + fallback global).
+     */
+    public static function isReadyToSend(?int $tenantId): bool
+    {
+        return MailConfig::isReadyForOutboxRow($tenantId);
+    }
 }

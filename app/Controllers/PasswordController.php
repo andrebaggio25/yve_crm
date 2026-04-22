@@ -9,6 +9,7 @@ use App\Core\Lang;
 use App\Core\Request;
 use App\Core\Response;
 use App\Core\Session;
+use App\Services\Mail\MailConfig;
 use App\Services\Mail\MailService;
 use App\Services\Security\LoginRateLimiter;
 
@@ -74,7 +75,7 @@ class PasswordController
         LoginRateLimiter::recordGenericAttempt($ip);
 
         $user = Database::fetch(
-            'SELECT id, email, name, locale FROM users WHERE email = :e AND deleted_at IS NULL AND status = :st',
+            'SELECT id, email, name, locale, tenant_id FROM users WHERE email = :e AND deleted_at IS NULL AND status = :st',
             [':e' => $data['email'], ':st' => 'active']
         );
 
@@ -99,10 +100,13 @@ class PasswordController
 
         [$subj, $html, $text] = self::resetEmailContent($locale, $link, (string) ($user['name'] ?? ''));
 
-        if (MailService::isConfigured()) {
-            MailService::queue((string) $user['email'], $subj, $html, $text, $locale, null, (string) ($user['name'] ?? ''));
+        $outboxTid = isset($user['tenant_id']) ? (int) $user['tenant_id'] : 0;
+        $outboxTid = $outboxTid > 0 ? $outboxTid : null;
+
+        if (MailConfig::isReadyForOutboxRow($outboxTid)) {
+            MailService::queue((string) $user['email'], $subj, $html, $text, $locale, $outboxTid, (string) ($user['name'] ?? ''));
         } else {
-            App::log('[Password reset] MAIL not configured; link for ' . $user['email'] . ' (dev only): ' . $link);
+            App::log('[Password reset] SMTP nao resolvido; link para ' . $user['email'] . ' (apenas log): ' . $link);
         }
 
         Session::flash('success', __('password.request_sent'));

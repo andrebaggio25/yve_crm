@@ -13,10 +13,6 @@ class SmtpProcessor
 {
     public static function runBatch(int $limit = 25): array
     {
-        if (!MailService::isConfigured()) {
-            return ['sent' => 0, 'failed' => 0, 'skipped' => 1];
-        }
-
         $rows = [];
         try {
             $rows = Database::fetchAll(
@@ -31,10 +27,24 @@ class SmtpProcessor
 
         $sent = 0;
         $failed = 0;
-        $mailer = self::buildMailer();
 
         foreach ($rows as $row) {
             $id = (int) $row['id'];
+            $rawTid = $row['tenant_id'] ?? null;
+            $tid = $rawTid !== null && $rawTid !== '' ? (int) $rawTid : null;
+
+            if (!MailConfig::isReadyForOutboxRow($tid)) {
+                $err = 'SMTP nao configurado: defina host e usuario (organizacao ou super admin / .env).';
+                Database::getInstance()->prepare(
+                    "UPDATE email_outbox SET status = 'failed', last_error = :e, attempts = attempts + 1 WHERE id = :id"
+                )->execute([':e' => mb_substr($err, 0, 2000), ':id' => $id]);
+                $failed++;
+                continue;
+            }
+
+            $c = MailConfig::getSmtpForTenant($tid);
+            $mailer = self::buildMailerFromConfig($c);
+
             Database::getInstance()->prepare(
                 "UPDATE email_outbox SET status = 'sending', attempts = attempts + 1 WHERE id = :id"
             )->execute([':id' => $id]);
@@ -70,15 +80,17 @@ class SmtpProcessor
         return ['sent' => $sent, 'failed' => $failed, 'skipped' => 0];
     }
 
-    private static function buildMailer(): PHPMailer
+    /**
+     * @param array{host:string,port:int,encryption:string,username:string,password:string,from_address:string,from_name:string} $c
+     */
+    public static function buildMailerFromConfig(array $c): PHPMailer
     {
-        $c = MailConfig::getSmtp();
         $mail = new PHPMailer(true);
         $mail->isSMTP();
-        $mail->Host = $c['host'] ?: 'localhost';
+        $mail->Host = $c['host'] !== '' ? $c['host'] : 'localhost';
         $mail->Port = $c['port'] > 0 ? $c['port'] : 587;
         $user = $c['username'];
-        $pass = $c['password'];
+        $pass = $c['password'] ?? '';
         $mail->Username = $user;
         $mail->Password = $pass;
         $mail->SMTPAuth = $user !== '' && $pass !== '';
@@ -98,5 +110,27 @@ class SmtpProcessor
         );
 
         return $mail;
+    }
+
+    /**
+     * Envio imediato (ex.: e-mail de teste). Propaga excecao PHPMailer.
+     *
+     * @param array{host:string,port:int,encryption:string,username:string,password:string,from_address:string,from_name:string} $c
+     */
+    public static function sendHtmlNow(
+        array $c,
+        string $toEmail,
+        string $toName,
+        string $subject,
+        string $html,
+        string $text
+    ): void {
+        $mailer = self::buildMailerFromConfig($c);
+        $mailer->addAddress($toEmail, $toName);
+        $mailer->Subject = $subject;
+        $mailer->isHTML(true);
+        $mailer->Body = $html;
+        $mailer->AltBody = $text !== '' ? $text : strip_tags($html);
+        $mailer->send();
     }
 }

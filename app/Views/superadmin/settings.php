@@ -140,9 +140,12 @@ $scripts = ['superadmin-settings'];
             <a href="/superadmin/tenants" class="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
                 Gerenciar Tenants
             </a>
+            <a href="/superadmin/email" class="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                Fila e teste de e-mail
+            </a>
         </div>
         <p class="mt-2 text-xs text-slate-500">
-            Acesse as paginas de migrations e tenants para gerenciar o sistema.
+            Acesse migrations, tenants e fila de e-mail para gerenciar o sistema.
         </p>
     </div>
 </div>

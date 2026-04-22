@@ -64,7 +64,16 @@ class TenantSettingsController
                 $merged = is_array($decoded) ? $decoded : [];
             }
             if (is_array($settings)) {
+                $oldSmtpPwd = $merged['smtp_password'] ?? '';
+                $preserveSmtpPwd = array_key_exists('smtp_password', $settings)
+                    && trim((string) $settings['smtp_password']) === '';
+                if ($preserveSmtpPwd) {
+                    unset($settings['smtp_password']);
+                }
                 $merged = array_merge($merged, $settings);
+                if ($preserveSmtpPwd && $oldSmtpPwd !== '') {
+                    $merged['smtp_password'] = $oldSmtpPwd;
+                }
             }
 
             Database::update(

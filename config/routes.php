@@ -154,6 +154,12 @@ return function (Router $router) {
             $router->put('/', 'TenantSettingsController@apiUpdate', 'api.tenant.update');
         });
 
+        $settingsAdmin = array_merge($authTenant, $csrfMiddleware, [\App\Middleware\RoleMiddleware::class . ':admin']);
+        $router->group('settings', function ($router) {
+            $router->get('/email-outbox', 'EmailDiagnosticController@apiTenantOutbox', 'api.settings.email-outbox');
+            $router->post('/email-test', 'EmailDiagnosticController@apiTenantTest', 'api.settings.email-test');
+        }, $settingsAdmin);
+
         $router->group('automations', function ($router) {
             $router->get('/', 'AutomationController@apiList', 'api.automations.list');
             $router->post('/', 'AutomationController@apiSave', 'api.automations.save');
@@ -173,6 +179,8 @@ return function (Router $router) {
             $router->put('/evolution-config', 'SuperAdminSettingsController@apiUpdateEvolutionConfig', 'api.superadmin.evolution-config.update');
             $router->get('/smtp-config', 'SuperAdminSettingsController@apiGetSmtpConfig', 'api.superadmin.smtp-config');
             $router->put('/smtp-config', 'SuperAdminSettingsController@apiUpdateSmtpConfig', 'api.superadmin.smtp-config.update');
+            $router->get('/email-outbox', 'EmailDiagnosticController@apiSuperAdminOutbox', 'api.superadmin.email-outbox');
+            $router->post('/email-test', 'EmailDiagnosticController@apiSuperAdminTest', 'api.superadmin.email-test');
         }, array_merge($superadminMiddleware, $csrfMiddleware));
 
         // Superadmin APIs - gerenciamento de tenants (com tenant para contexto de operacao)
@@ -204,6 +212,7 @@ return function (Router $router) {
     // Superadmin - Migrations e controle do sistema (acesso global, sem necessidade de tenant proprio)
     $router->group('superadmin', function ($router) {
         $router->get('/migrations', 'MigrationController@index', 'superadmin.migrations');
+        $router->get('/email', 'EmailDiagnosticController@pageSuperAdmin', 'superadmin.email');
     }, $superadminMiddleware);
 
     $superadminApiMiddleware = array_merge($superadminMiddleware, $csrfMiddleware);
