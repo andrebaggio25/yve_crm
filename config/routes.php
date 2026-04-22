@@ -29,9 +29,11 @@ return function (Router $router) {
         $router->post('/login', 'AuthController@login', 'login.post');
     }, $csrfMiddleware);
 
-    $router->get('/register', 'RegisterController@show', 'register');
+    $router->get('/password/forgot', 'PasswordController@showForgot', 'password.forgot');
+    $router->get('/password/reset/{token}', 'PasswordController@showReset', 'password.reset');
     $router->group('', function ($router) {
-        $router->post('/register', 'RegisterController@register', 'register.post');
+        $router->post('/password/forgot', 'PasswordController@sendLink', 'password.forgot.post');
+        $router->post('/password/reset', 'PasswordController@reset', 'password.reset.post');
     }, $csrfMiddleware);
 
     $router->post('/webhook/evolution/{token}', 'WebhookController@evolution', 'webhook.evolution');
@@ -53,6 +55,11 @@ return function (Router $router) {
         $router->get('/', 'InboxController@index', 'inbox');
     }, $authTenant);
 
+    $router->group('profile', function ($router) {
+        $router->get('/', 'ProfileController@index', 'profile');
+        $router->post('/', 'ProfileController@update', 'profile.update');
+    }, array_merge($authMiddleware, $csrfMiddleware));
+
     // Super Admin - Configuracoes globais (sem necessidade de tenant)
     $router->group('superadmin', function ($router) {
         $router->get('/settings', 'SuperAdminSettingsController@index', 'superadmin.settings');
@@ -66,6 +73,8 @@ return function (Router $router) {
             $router->get('/', 'PipelineController@apiList', 'api.pipelines.list');
             $router->get('/{id}', 'PipelineController@apiShow', 'api.pipelines.show');
             $router->post('/', 'PipelineController@apiCreate', 'api.pipelines.create');
+            $router->post('/{id}/stages', 'PipelineController@apiCreateStage', 'api.pipelines.stages.create');
+            $router->delete('/{id}/stages/{stageId}', 'PipelineController@apiDeleteStage', 'api.pipelines.stages.delete');
             $router->put('/{id}', 'PipelineController@apiUpdate', 'api.pipelines.update');
             $router->delete('/{id}', 'PipelineController@apiDelete', 'api.pipelines.delete');
             $router->get('/{id}/kanban', 'KanbanController@apiGetKanban', 'api.kanban.data');

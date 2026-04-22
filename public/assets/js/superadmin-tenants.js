@@ -45,7 +45,10 @@ document.addEventListener('DOMContentLoaded', function() {
             company: form.company.value,
             name: form.name.value,
             email: form.email.value,
-            password: form.password.value
+            password: form.password.value,
+            timezone: form.timezone?.value || 'Europe/Madrid',
+            default_locale: form.default_locale?.value || 'es',
+            currency: (form.currency?.value || 'EUR').toUpperCase()
         };
 
         try {

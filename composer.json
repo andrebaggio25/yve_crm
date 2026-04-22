@@ -3,6 +3,7 @@
     "description": "Yve CRM",
     "require": {
         "php": ">=8.0",
+        "phpmailer/phpmailer": "^7.0",
         "phpoffice/phpspreadsheet": "~2.1.0"
     },
     "scripts": {

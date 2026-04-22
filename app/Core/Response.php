@@ -63,6 +63,7 @@ class Response
 
     public function view(string $viewPath, array $data = [], ?string $layout = 'main'): void
     {
+        Lang::initFromRequest();
         $this->setHeader('Content-Type', 'text/html; charset=utf-8');
         $this->sendHeaders();
         

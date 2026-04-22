@@ -233,7 +233,7 @@ class AutomationEngine
 
             case 'delay':
                 // Agendar para execucao futura
-                self::scheduleDelay($executionId, $nodeId, $config, $node['next'] ?? null);
+                self::scheduleDelay($executionId, $nodeId, $config, $node['next'] ?? null, $tenantId);
                 return; // Para aqui, worker vai retomar
 
             default:
@@ -252,7 +252,7 @@ class AutomationEngine
     /**
      * Aguarda um delay agendando para execucao futura.
      */
-    private static function scheduleDelay(int $executionId, string $nodeId, array $config, ?string $nextNodeId): void
+    private static function scheduleDelay(int $executionId, string $nodeId, array $config, ?string $nextNodeId, int $tenantId): void
     {
         $amount = (int) ($config['amount'] ?? 1);
         $unit = (string) ($config['unit'] ?? 'hours');
@@ -265,7 +265,8 @@ class AutomationEngine
             default => "+{$amount} hours",
         };
 
-        $scheduledFor = date('Y-m-d H:i:s', strtotime($interval));
+        $base = \App\Services\TenantTime::nowForTenant($tenantId);
+        $scheduledFor = $base->modify($interval)->format('Y-m-d H:i:s');
 
         // Inserir na fila
         Database::insert('automation_scheduled_actions', [

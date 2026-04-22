@@ -57,6 +57,9 @@ const Users = {
             document.getElementById('user-phone').value = user.phone || '';
             document.getElementById('user-role').value = user.role || '';
             document.getElementById('user-status').value = user.status || 'active';
+            if (document.getElementById('user-locale')) {
+                document.getElementById('user-locale').value = user.locale || 'es';
+            }
             passwordInput.value = '';
         } else {
             passwordLabel.textContent = 'Senha';
@@ -66,6 +69,9 @@ const Users = {
             this.form.reset();
             document.getElementById('user-id').value = '';
             document.getElementById('user-status').value = 'active';
+            if (document.getElementById('user-locale')) {
+                document.getElementById('user-locale').value = 'es';
+            }
         }
 
         this.modal.classList.remove('hidden');

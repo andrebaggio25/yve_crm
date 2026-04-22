@@ -7,22 +7,23 @@ use App\Core\Request;
 use App\Core\Response;
 use App\Core\Session;
 use App\Core\TenantAwareDatabase;
+use App\Core\TenantContext;
 
 class UserController
 {
     public function index(Request $request, Response $response): void
     {
         $users = TenantAwareDatabase::fetchAll(
-            "SELECT id, name, email, role, status, phone, created_at 
-             FROM users 
+            "SELECT id, name, email, role, status, phone, locale, created_at
+             FROM users
              WHERE deleted_at IS NULL AND tenant_id = :tenant_id
              ORDER BY created_at DESC",
             TenantAwareDatabase::mergeTenantParams()
         );
 
         $response->view('users.index', [
-            'title' => 'Usuarios',
-            'pageTitle' => 'Gerenciamento de Usuarios',
+            'title' => __('users.title'),
+            'pageTitle' => __('users.page_title'),
             'users' => $users,
         ]);
     }
@@ -31,8 +32,8 @@ class UserController
     {
         try {
             $users = TenantAwareDatabase::fetchAll(
-                "SELECT id, name, email, role, status, phone, created_at 
-                 FROM users 
+                "SELECT id, name, email, role, status, phone, locale, created_at
+                 FROM users
                  WHERE deleted_at IS NULL AND tenant_id = :tenant_id
                  ORDER BY created_at DESC",
                 TenantAwareDatabase::mergeTenantParams()
@@ -57,8 +58,8 @@ class UserController
 
         try {
             $user = TenantAwareDatabase::fetch(
-                "SELECT id, name, email, role, status, phone, created_at 
-                 FROM users 
+                "SELECT id, name, email, role, status, phone, locale, created_at
+                 FROM users
                  WHERE id = :id AND deleted_at IS NULL AND tenant_id = :tenant_id",
                 TenantAwareDatabase::mergeTenantParams([':id' => $id])
             );
@@ -82,15 +83,21 @@ class UserController
             $data = $request->validate([
                 'name' => 'required|min:3',
                 'email' => 'required|email',
-                'password' => 'required|min:6',
+                'password' => 'required|min:8',
                 'role' => 'required',
                 'phone' => '',
+                'locale' => '',
             ]);
         } catch (\InvalidArgumentException $e) {
             $errors = json_decode($e->getMessage(), true);
             $response->jsonError('Dados invalidos', 422, $errors);
 
             return;
+        }
+
+        $json = $request->getJsonInput();
+        if (isset($json['locale'])) {
+            $data['locale'] = $json['locale'];
         }
 
         if (($data['role'] ?? '') === 'superadmin' && (string) (Session::user()['role'] ?? '') !== 'superadmin') {
@@ -110,6 +117,13 @@ class UserController
             return;
         }
 
+        $tenant = TenantContext::getTenant();
+        $tloc = in_array($tenant['default_locale'] ?? 'es', ['en', 'es', 'pt'], true) ? (string) ($tenant['default_locale'] ?? 'es') : 'es';
+        $uloc = (string) ($data['locale'] ?? $tloc);
+        if (!in_array($uloc, ['en', 'es', 'pt'], true)) {
+            $uloc = $tloc;
+        }
+
         try {
             $userId = TenantAwareDatabase::insert('users', [
                 'name' => $data['name'],
@@ -118,10 +132,11 @@ class UserController
                 'role' => $data['role'],
                 'phone' => $data['phone'] ?? null,
                 'status' => 'active',
+                'locale' => $uloc,
             ]);
 
             $user = TenantAwareDatabase::fetch(
-                'SELECT id, name, email, role, status, phone, created_at FROM users WHERE id = :id AND tenant_id = :tenant_id',
+                'SELECT id, name, email, role, status, phone, locale, created_at FROM users WHERE id = :id AND tenant_id = :tenant_id',
                 TenantAwareDatabase::mergeTenantParams([':id' => $userId])
             );
 
@@ -202,7 +217,16 @@ class UserController
             $updateData['status'] = $data['status'];
         }
 
+        if (isset($data['locale']) && in_array($data['locale'], ['en', 'es', 'pt'], true)) {
+            $updateData['locale'] = $data['locale'];
+        }
+
         if (!empty($data['password'])) {
+            if (strlen($data['password']) < 8) {
+                $response->jsonError('Senha muito curta (min 8)', 422);
+
+                return;
+            }
             $updateData['password_hash'] = password_hash($data['password'], PASSWORD_BCRYPT);
         }
 
@@ -216,7 +240,7 @@ class UserController
             TenantAwareDatabase::update('users', $updateData, 'id = :id', [':id' => $id]);
 
             $user = TenantAwareDatabase::fetch(
-                'SELECT id, name, email, role, status, phone, created_at FROM users WHERE id = :id AND tenant_id = :tenant_id',
+                'SELECT id, name, email, role, status, phone, locale, created_at FROM users WHERE id = :id AND tenant_id = :tenant_id',
                 TenantAwareDatabase::mergeTenantParams([':id' => $id])
             );
 

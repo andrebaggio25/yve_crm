@@ -44,8 +44,26 @@ $scripts = ['superadmin-tenants'];
             </div>
             <div>
                 <label class="mb-1 block text-sm font-medium text-slate-700">Senha *</label>
-                <input type="password" name="password" required minlength="6" class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm">
-                <p class="mt-1 text-xs text-slate-500">Minimo 6 caracteres</p>
+                <input type="password" name="password" required minlength="8" class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm">
+                <p class="mt-1 text-xs text-slate-500">Minimo 8 caracteres</p>
+            </div>
+            <div class="grid gap-3 sm:grid-cols-2">
+                <div>
+                    <label class="mb-1 block text-sm font-medium text-slate-700">Timezone (IANA)</label>
+                    <input type="text" name="timezone" value="Europe/Madrid" class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Europe/Madrid">
+                </div>
+                <div>
+                    <label class="mb-1 block text-sm font-medium text-slate-700">Idioma padrao</label>
+                    <select name="default_locale" class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm">
+                        <option value="es" selected>Español (es)</option>
+                        <option value="en">English (en)</option>
+                        <option value="pt">Português (pt)</option>
+                    </select>
+                </div>
+            </div>
+            <div>
+                <label class="mb-1 block text-sm font-medium text-slate-700">Moeda (ISO 4217)</label>
+                <input type="text" name="currency" value="EUR" maxlength="3" class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="EUR">
             </div>
             <div class="flex flex-col-reverse gap-2 border-t border-slate-100 pt-4 sm:flex-row sm:justify-end">
                 <button type="button" id="btn-cancel-tenant" class="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancelar</button>

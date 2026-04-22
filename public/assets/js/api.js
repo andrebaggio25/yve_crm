@@ -106,6 +106,11 @@ const API = {
         return this.request(url, { method: 'DELETE' });
     },
 
+    /** DELETE com corpo JSON (ex.: migrar leads ao excluir etapa). */
+    deleteWithBody(url, data = {}) {
+        return this.request(url, { method: 'DELETE', body: data });
+    },
+
     // Leads
     leads: {
         list(params = {}) {

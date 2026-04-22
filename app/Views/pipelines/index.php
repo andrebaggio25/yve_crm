@@ -1,6 +1,6 @@
 <?php
-$title = 'Pipelines';
-$pageTitle = 'Gerenciamento de Pipelines';
+$title = __('pipelines.title');
+$pageTitle = __('pipelines.page_title');
 ?>
 <div class="pipelines-page mx-auto w-full max-w-6xl">
     <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -94,4 +94,29 @@ $pageTitle = 'Gerenciamento de Pipelines';
     </div>
 </div>
 
+<div class="fixed inset-0 z-[400] hidden items-center justify-center bg-black/50 p-4" id="stages-modal" aria-hidden="true">
+    <div class="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-xl" role="document" onclick="event.stopPropagation()">
+        <div class="mb-4 flex items-center justify-between">
+            <h3 class="text-lg font-semibold text-slate-900" id="stages-modal-title"><?= htmlspecialchars(__('pipelines.stages_title')) ?></h3>
+            <button type="button" class="rounded-lg p-2 text-slate-500 hover:bg-slate-100" id="stages-modal-close">&times;</button>
+        </div>
+        <div id="stages-list" class="space-y-3"></div>
+        <div class="mt-4 flex flex-wrap gap-2">
+            <button type="button" id="btn-add-stage" class="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"><?= htmlspecialchars(__('pipelines.add_stage')) ?></button>
+            <button type="button" id="btn-save-stages" class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700"><?= htmlspecialchars(__('pipelines.save_stages')) ?></button>
+        </div>
+    </div>
+</div>
+
+<script>
+window.PIPELINES_I18N = <?= json_encode([
+    'editStages' => __('pipelines.edit_stages'),
+    'stageName' => __('pipelines.stage_name'),
+    'color' => __('pipelines.color'),
+    'type' => __('pipelines.type'),
+    'delete' => __('pipelines.delete_stage'),
+    'cannotDelete' => __('pipelines.cannot_delete_leads'),
+    'saving' => __('common.loading'),
+], JSON_UNESCAPED_UNICODE) ?>;
+</script>
 <?php $scripts = ['pipelines']; ?>

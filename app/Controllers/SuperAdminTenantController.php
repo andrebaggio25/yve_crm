@@ -44,9 +44,24 @@ class SuperAdminTenantController
             $response->jsonError('Email invalido', 422);
             return;
         }
-        if (strlen($password) < 6) {
-            $response->jsonError('Senha muito curta (min 6 caracteres)', 422);
+        if (strlen($password) < 8) {
+            $response->jsonError('Senha muito curta (min 8 caracteres)', 422);
             return;
+        }
+
+        $timezone = trim((string) ($data['timezone'] ?? 'Europe/Madrid'));
+        try {
+            new \DateTimeZone($timezone === '' ? 'Europe/Madrid' : $timezone);
+        } catch (\Throwable $e) {
+            $timezone = 'Europe/Madrid';
+        }
+        $defaultLocale = (string) ($data['default_locale'] ?? 'es');
+        if (!in_array($defaultLocale, ['en', 'es', 'pt'], true)) {
+            $defaultLocale = 'es';
+        }
+        $currency = strtoupper((string) ($data['currency'] ?? 'EUR'));
+        if (!preg_match('/^[A-Z]{3}$/', $currency)) {
+            $currency = 'EUR';
         }
 
         // Verifica se email ja existe
@@ -72,6 +87,9 @@ class SuperAdminTenantController
                 'status' => 'trial',
                 'max_users' => 5,
                 'max_leads' => 500,
+                'timezone' => $timezone,
+                'default_locale' => $defaultLocale,
+                'currency' => $currency,
             ]);
 
             // Cria usuario admin
@@ -82,6 +100,7 @@ class SuperAdminTenantController
                 'password_hash' => password_hash($password, PASSWORD_BCRYPT),
                 'role' => 'admin',
                 'status' => 'active',
+                'locale' => $defaultLocale,
             ]);
 
             // Atualiza owner do tenant

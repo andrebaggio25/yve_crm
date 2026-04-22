@@ -25,8 +25,8 @@ class PipelineController
         );
 
         $response->view('pipelines.index', [
-            'title' => 'Pipelines',
-            'pageTitle' => 'Gerenciamento de Pipelines',
+            'title' => __('pipelines.title'),
+            'pageTitle' => __('pipelines.page_title'),
             'pipelines' => $pipelines,
         ]);
     }
@@ -354,5 +354,194 @@ class PipelineController
             App::logError('Erro ao atualizar etapas', $e);
             $response->jsonError('Erro ao atualizar etapas', 500);
         }
+    }
+
+    public function apiCreateStage(Request $request, Response $response): void
+    {
+        $pipelineId = (int) ($request->getParam('id') ?? 0);
+        if ($pipelineId <= 0) {
+            $response->jsonError('ID nao fornecido', 400);
+
+            return;
+        }
+
+        $data = $request->getJsonInput() ?? [];
+        $name = trim((string) ($data['name'] ?? ''));
+        if ($name === '') {
+            $response->jsonError('Nome da etapa obrigatorio', 422);
+
+            return;
+        }
+
+        $type = (string) ($data['stage_type'] ?? 'intermediate');
+        $allowed = ['initial', 'intermediate', 'hot', 'warm', 'cold', 'won', 'lost'];
+        if (!in_array($type, $allowed, true)) {
+            $type = 'intermediate';
+        }
+
+        $color = (string) ($data['color_token'] ?? $data['color'] ?? '#6B7280');
+        $tid = TenantContext::getEffectiveTenantId();
+
+        $p = TenantAwareDatabase::fetch(
+            'SELECT id FROM pipelines WHERE id = :id AND tenant_id = :tenant_id',
+            TenantAwareDatabase::mergeTenantParams([':id' => $pipelineId])
+        );
+        if (!$p) {
+            $response->jsonError('Pipeline nao encontrado', 404);
+
+            return;
+        }
+
+        $max = TenantAwareDatabase::fetch(
+            'SELECT COALESCE(MAX(position), 0) AS m FROM pipeline_stages WHERE pipeline_id = :pid AND tenant_id = :tid',
+            [':pid' => $pipelineId, ':tid' => $tid]
+        );
+        $pos = (int) ($max['m'] ?? 0) + 1;
+
+        $baseSlug = $this->slugifyStageName($name);
+        $slug = $this->uniqueStageSlug($pipelineId, $tid, $baseSlug);
+
+        $ins = [
+            'tenant_id' => $tid,
+            'pipeline_id' => $pipelineId,
+            'name' => $name,
+            'slug' => $slug,
+            'stage_type' => $type,
+            'color_token' => $color,
+            'position' => $pos,
+            'is_default' => 0,
+            'is_final' => in_array($type, ['won', 'lost'], true) ? 1 : 0,
+            'win_probability' => (float) ($data['win_probability'] ?? 0),
+        ];
+
+        try {
+            $id = (int) TenantAwareDatabase::insert('pipeline_stages', $ins);
+            $row = TenantAwareDatabase::fetch(
+                'SELECT * FROM pipeline_stages WHERE id = :id AND tenant_id = :tid',
+                [':id' => $id, ':tid' => $tid]
+            );
+            $response->jsonSuccess(['stage' => $row], 'Etapa criada');
+        } catch (\Exception $e) {
+            App::logError('Erro ao criar etapa', $e);
+            $response->jsonError('Erro ao criar etapa', 500);
+        }
+    }
+
+    public function apiDeleteStage(Request $request, Response $response): void
+    {
+        $pipelineId = (int) ($request->getParam('id') ?? 0);
+        $stageId = (int) ($request->getParam('stageId') ?? 0);
+        if ($pipelineId <= 0 || $stageId <= 0) {
+            $response->jsonError('IDs invalidos', 400);
+
+            return;
+        }
+
+        $tid = TenantContext::getEffectiveTenantId();
+        $data = $request->getJsonInput() ?? [];
+        $moveTo = isset($data['move_to_stage_id']) ? (int) $data['move_to_stage_id'] : 0;
+
+        $stage = TenantAwareDatabase::fetch(
+            'SELECT * FROM pipeline_stages WHERE id = :sid AND pipeline_id = :pid AND tenant_id = :tid',
+            [':sid' => $stageId, ':pid' => $pipelineId, ':tid' => $tid]
+        );
+        if (!$stage) {
+            $response->jsonError('Etapa nao encontrada', 404);
+
+            return;
+        }
+
+        $leadCount = (int) (TenantAwareDatabase::fetch(
+            'SELECT COUNT(*) AS c FROM leads WHERE stage_id = :sid AND pipeline_id = :pid AND deleted_at IS NULL AND tenant_id = :tid',
+            [':sid' => $stageId, ':pid' => $pipelineId, ':tid' => $tid]
+        )['c'] ?? 0);
+
+        if ($leadCount > 0) {
+            if ($moveTo <= 0 || $moveTo === $stageId) {
+                $response->jsonError('Informe move_to_stage_id para migrar os leads', 422);
+
+                return;
+            }
+            $target = TenantAwareDatabase::fetch(
+                'SELECT id FROM pipeline_stages WHERE id = :id AND pipeline_id = :pid AND tenant_id = :tid',
+                [':id' => $moveTo, ':pid' => $pipelineId, ':tid' => $tid]
+            );
+            if (!$target) {
+                $response->jsonError('Etapa de destino invalida', 422);
+
+                return;
+            }
+            try {
+                TenantAwareDatabase::query(
+                    'UPDATE leads SET stage_id = :to WHERE stage_id = :from AND pipeline_id = :pid AND deleted_at IS NULL AND tenant_id = :tid',
+                    [':to' => $moveTo, ':from' => $stageId, ':pid' => $pipelineId, ':tid' => $tid]
+                );
+            } catch (\Exception $e) {
+                App::logError('Erro ao mover leads de etapa', $e);
+                $response->jsonError('Erro ao migrar leads', 500);
+
+                return;
+            }
+        }
+
+        $stagesCount = (int) (TenantAwareDatabase::fetch(
+            'SELECT COUNT(*) AS c FROM pipeline_stages WHERE pipeline_id = :pid AND tenant_id = :tid',
+            [':pid' => $pipelineId, ':tid' => $tid]
+        )['c'] ?? 0);
+        if ($stagesCount <= 1) {
+            $response->jsonError('O pipeline precisa de pelo menos uma etapa', 422);
+
+            return;
+        }
+
+        if ((int) $stage['is_default'] === 1) {
+            $other = TenantAwareDatabase::fetch(
+                'SELECT id FROM pipeline_stages WHERE pipeline_id = :pid AND tenant_id = :tid AND id != :sid ORDER BY position LIMIT 1',
+                [':pid' => $pipelineId, ':tid' => $tid, ':sid' => $stageId]
+            );
+            if ($other) {
+                TenantAwareDatabase::query(
+                    'UPDATE pipeline_stages SET is_default = 1 WHERE id = :id AND tenant_id = :tid',
+                    [':id' => (int) $other['id'], ':tid' => $tid]
+                );
+            }
+        }
+
+        try {
+            TenantAwareDatabase::query(
+                'DELETE FROM pipeline_stages WHERE id = :sid AND pipeline_id = :pid AND tenant_id = :tid',
+                [':sid' => $stageId, ':pid' => $pipelineId, ':tid' => $tid]
+            );
+            $response->jsonSuccess([], 'Etapa removida');
+        } catch (\Exception $e) {
+            App::logError('Erro ao excluir etapa', $e);
+            $response->jsonError('Erro ao excluir etapa. Verifique dependencias (templates, etc).', 500);
+        }
+    }
+
+    private function slugifyStageName(string $text): string
+    {
+        $text = preg_replace('~[^\pL\d]+~u', '-', $text);
+        $text = @iconv('UTF-8', 'ASCII//TRANSLIT', $text) ?: $text;
+        $text = preg_replace('~[^-\w]+~', '', $text);
+        $text = trim($text, '-');
+        $text = preg_replace('~-+~', '-', $text);
+
+        return strtolower($text ?: 'etapa');
+    }
+
+    private function uniqueStageSlug(int $pipelineId, int $tid, string $base): string
+    {
+        $slug = $base;
+        $n = 0;
+        while (TenantAwareDatabase::fetch(
+            'SELECT id FROM pipeline_stages WHERE pipeline_id = :pid AND tenant_id = :tid AND slug = :s LIMIT 1',
+            [':pid' => $pipelineId, ':tid' => $tid, ':s' => $slug]
+        )) {
+            $n++;
+            $slug = $base . '-' . $n;
+        }
+
+        return $slug;
     }
 }
