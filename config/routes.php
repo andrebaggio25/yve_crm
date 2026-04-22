@@ -158,6 +158,7 @@ return function (Router $router) {
         $router->group('settings', function ($router) {
             $router->get('/email-outbox', 'EmailDiagnosticController@apiTenantOutbox', 'api.settings.email-outbox');
             $router->post('/email-test', 'EmailDiagnosticController@apiTenantTest', 'api.settings.email-test');
+            $router->post('/smtp-validate', 'EmailDiagnosticController@apiTenantValidateSmtp', 'api.settings.smtp-validate');
         }, $settingsAdmin);
 
         $router->group('automations', function ($router) {
@@ -179,6 +180,7 @@ return function (Router $router) {
             $router->put('/evolution-config', 'SuperAdminSettingsController@apiUpdateEvolutionConfig', 'api.superadmin.evolution-config.update');
             $router->get('/smtp-config', 'SuperAdminSettingsController@apiGetSmtpConfig', 'api.superadmin.smtp-config');
             $router->put('/smtp-config', 'SuperAdminSettingsController@apiUpdateSmtpConfig', 'api.superadmin.smtp-config.update');
+            $router->post('/smtp-validate', 'SuperAdminSettingsController@apiValidateSmtpConfig', 'api.superadmin.smtp-validate');
             $router->get('/email-outbox', 'EmailDiagnosticController@apiSuperAdminOutbox', 'api.superadmin.email-outbox');
             $router->post('/email-test', 'EmailDiagnosticController@apiSuperAdminTest', 'api.superadmin.email-test');
         }, array_merge($superadminMiddleware, $csrfMiddleware));

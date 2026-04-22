@@ -3,6 +3,7 @@
 namespace App\Controllers;
 
 use App\Core\Database;
+use App\Core\Env;
 use App\Core\Request;
 use App\Core\Response;
 use App\Core\Session;
@@ -103,6 +104,7 @@ class EmailDiagnosticController
 
     public function apiTenantTest(Request $request, Response $response): void
     {
+        $this->setSmtpTestLimits();
         $data = $request->getJsonInput() ?? [];
         $to = trim((string) ($data['to'] ?? ''));
         if (!filter_var($to, FILTER_VALIDATE_EMAIL)) {
@@ -146,8 +148,50 @@ class EmailDiagnosticController
         }
     }
 
+    /**
+     * Valida conexao SMTP (tenant) com dados do formulario; senha vazia usa a gravada.
+     */
+    public function apiTenantValidateSmtp(Request $request, Response $response): void
+    {
+        $this->setSmtpTestLimits();
+        $data = $request->getJsonInput() ?? [];
+        $user = Session::user();
+        $tid = TenantContext::getTenantId() ?? (int) ($user['tenant_id'] ?? 0);
+        if ($tid <= 0) {
+            $response->jsonError('Sem organizacao', 400);
+
+            return;
+        }
+        $row = Database::fetch('SELECT settings_json FROM tenants WHERE id = :id', [':id' => $tid]);
+        $merged = [];
+        if ($row && !empty($row['settings_json'])) {
+            $decoded = is_string($row['settings_json']) ? json_decode($row['settings_json'], true) : $row['settings_json'];
+            $merged = is_array($decoded) ? $decoded : [];
+        }
+        if (trim((string) ($data['smtp_password'] ?? '')) === '' && !empty($merged['smtp_password'])) {
+            $data['smtp_password'] = (string) $merged['smtp_password'];
+        }
+        if (trim((string) ($data['smtp_password'] ?? '')) === '' && (string) Env::get('MAIL_PASSWORD', '') !== '') {
+            $data['smtp_password'] = (string) Env::get('MAIL_PASSWORD', '');
+        }
+        $base = MailConfig::getSmtpForTenant($tid);
+        $c = MailConfig::applySmtpOverrides($data, $base);
+        if (!MailConfig::isSystemSmtpComplete($c)) {
+            $response->jsonError('Preencha host, usuario e senha (ou a ja salva / .env).', 422);
+
+            return;
+        }
+        try {
+            SmtpProcessor::validateSmtpConfig($c);
+            $response->jsonSuccess([], 'Conexao SMTP validada (conexao e autenticacao).');
+        } catch (\Throwable $e) {
+            $response->jsonError('Validacao falhou: ' . mb_substr($e->getMessage(), 0, 450), 502);
+        }
+    }
+
     public function apiSuperAdminTest(Request $request, Response $response): void
     {
+        $this->setSmtpTestLimits();
         $data = $request->getJsonInput() ?? [];
         $to = trim((string) ($data['to'] ?? ''));
         if (!filter_var($to, FILTER_VALIDATE_EMAIL)) {
@@ -179,6 +223,13 @@ class EmailDiagnosticController
         } catch (\Throwable $e) {
             $msg = $e->getMessage();
             $response->jsonError('Falha ao enviar: ' . mb_substr($msg, 0, 500), 502);
+        }
+    }
+
+    private function setSmtpTestLimits(): void
+    {
+        if (function_exists('set_time_limit')) {
+            @set_time_limit(60);
         }
     }
 

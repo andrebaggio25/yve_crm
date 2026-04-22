@@ -66,12 +66,12 @@ const API = {
         }
     },
 
-    get(url) {
-        return this.request(url, { method: 'GET' });
+    get(url, requestOptions = {}) {
+        return this.request(url, { method: 'GET', ...requestOptions });
     },
 
-    post(url, data = {}) {
-        return this.request(url, { method: 'POST', body: data });
+    post(url, data = {}, requestOptions = {}) {
+        return this.request(url, { method: 'POST', body: data, ...requestOptions });
     },
 
     /**
@@ -98,8 +98,8 @@ const API = {
         return data;
     },
 
-    put(url, data = {}) {
-        return this.request(url, { method: 'PUT', body: data });
+    put(url, data = {}, requestOptions = {}) {
+        return this.request(url, { method: 'PUT', body: data, ...requestOptions });
     },
 
     delete(url) {

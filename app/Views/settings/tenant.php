@@ -232,12 +232,15 @@ $statusLabels = [
                         <input type="text" name="smtp_from_name" class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value="<?= htmlspecialchars($smtpFromName) ?>" placeholder="(sistema)">
                     </div>
                 </div>
-                <div class="mt-4 flex flex-col gap-2 border-t border-slate-100 pt-4 sm:flex-row sm:items-end">
+                <div class="mt-4 flex flex-col gap-2 border-t border-slate-100 pt-4 sm:flex-row sm:flex-wrap sm:items-end">
                     <div class="min-w-0 flex-1 sm:max-w-md">
                         <label class="text-sm font-medium text-slate-700" for="tenant-test-to">E-mail de teste</label>
                         <input type="email" name="test_to" id="tenant-test-to" class="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="enviar@exemplo.com" autocomplete="email">
                     </div>
-                    <button type="button" id="btn-tenant-test-email" class="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-800 hover:bg-slate-50">Enviar teste agora</button>
+                    <div class="flex flex-wrap gap-2">
+                        <button type="button" id="btn-tenant-smtp-validate" class="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-800 hover:bg-slate-50">Validar conexao</button>
+                        <button type="button" id="btn-tenant-test-email" class="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-800 hover:bg-slate-50">Enviar teste agora</button>
+                    </div>
                 </div>
                 <p id="tenant-test-msg" class="mt-2 hidden text-sm"></p>
             </div>
@@ -340,6 +343,51 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('tenant-outbox-status')?.addEventListener('change', loadTenantOutbox);
     loadTenantOutbox();
 
+    function collectTenantSmtpForApi(form) {
+        const b = {
+            smtp_host: (form.smtp_host?.value || '').trim(),
+            smtp_port: Math.max(1, parseInt(form.smtp_port?.value, 10) || 587),
+            smtp_encryption: form.smtp_encryption?.value || 'tls',
+            smtp_username: (form.smtp_username?.value || '').trim(),
+            smtp_from_address: (form.smtp_from_address?.value || '').trim(),
+            smtp_from_name: (form.smtp_from_name?.value || '').trim()
+        };
+        const p = (form.smtp_password?.value || '').trim();
+        if (p) {
+            b.smtp_password = p;
+        }
+        return b;
+    }
+
+    function withAbortMs(ms) {
+        const c = new AbortController();
+        const t = setTimeout(() => c.abort(), ms);
+        return { signal: c.signal, done: () => clearTimeout(t) };
+    }
+
+    document.getElementById('btn-tenant-smtp-validate')?.addEventListener('click', async () => {
+        const form = document.getElementById('tenant-form');
+        const msg = document.getElementById('tenant-test-msg');
+        if (!form) {
+            return;
+        }
+        if (msg) {
+            msg.className = 'mt-2 text-sm text-slate-600';
+            msg.textContent = 'Testando conexao SMTP (ate ~40s)...';
+            msg.classList.remove('hidden');
+        }
+        const { signal, done } = withAbortMs(40000);
+        try {
+            const r = await API.post('/api/settings/smtp-validate', collectTenantSmtpForApi(form), { signal: signal });
+            if (msg) { msg.className = 'mt-2 text-sm text-green-700'; msg.textContent = r.message || 'Conexao validada'; }
+        } catch (err) {
+            if (msg) {
+                msg.className = 'mt-2 text-sm text-red-700';
+                msg.textContent = (err.name === 'AbortError' ? 'Tempo esgotado. Verifique host/porta e MAIL_TIMEOUT no servidor.' : (err.message || 'Falha'));
+            }
+        } finally { done(); }
+    });
+
     document.getElementById('btn-tenant-test-email')?.addEventListener('click', async () => {
         const to = document.getElementById('tenant-test-to')?.value?.trim();
         const msg = document.getElementById('tenant-test-msg');
@@ -347,13 +395,17 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (msg) { msg.className = 'mt-2 text-sm text-amber-700'; msg.textContent = 'Indique o e-mail de destino.'; msg.classList.remove('hidden'); }
             return;
         }
-        if (msg) { msg.className = 'mt-2 text-sm text-slate-600'; msg.textContent = 'Enviando...'; msg.classList.remove('hidden'); }
+        if (msg) { msg.className = 'mt-2 text-sm text-slate-600'; msg.textContent = 'Enviando (ate ~40s)...'; msg.classList.remove('hidden'); }
+        const { signal, done } = withAbortMs(40000);
         try {
-            const r = await API.post('/api/settings/email-test', { to: to });
+            const r = await API.post('/api/settings/email-test', { to: to }, { signal: signal });
             if (msg) { msg.className = 'mt-2 text-sm text-green-700'; msg.textContent = r.message || 'Enviado'; }
         } catch (err) {
-            if (msg) { msg.className = 'mt-2 text-sm text-red-700'; msg.textContent = err.message || 'Falha'; }
-        }
+            if (msg) {
+                msg.className = 'mt-2 text-sm text-red-700';
+                msg.textContent = (err.name === 'AbortError' ? 'Tempo esgotado. Verifique SMTP ou firewall.' : (err.message || 'Falha'));
+            }
+        } finally { done(); }
     });
 
     // Form submit

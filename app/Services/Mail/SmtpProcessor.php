@@ -3,6 +3,7 @@
 namespace App\Services\Mail;
 
 use App\Core\Database;
+use App\Core\Env;
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception as MailException;
 
@@ -109,7 +110,35 @@ class SmtpProcessor
             $c['from_name'] !== '' ? $c['from_name'] : 'Yve CRM'
         );
 
+        $t = (int) (Env::get('MAIL_TIMEOUT', '25') ?: 25);
+        $mail->Timeout = $t > 0 && $t < 300 ? $t : 25;
+        if (function_exists('ini_set')) {
+            @ini_set('default_socket_timeout', (string) $mail->Timeout);
+        }
+
         return $mail;
+    }
+
+    /**
+     * Conecta e autentica (se SMTPAuth) e desliga — sem enviar mensagem.
+     *
+     * @param array{host:string,port:int,encryption:string,username:string,password:string,from_address:string,from_name:string} $c
+     */
+    public static function validateSmtpConfig(array $c): void
+    {
+        if (!MailConfig::isSystemSmtpComplete($c)) {
+            throw new \InvalidArgumentException('Host e usuario SMTP sao obrigatorios para validar');
+        }
+        $mailer = self::buildMailerFromConfig($c);
+        try {
+            if (!$mailer->smtpConnect()) {
+                throw new \RuntimeException('Falha ao conectar ou autenticar no SMTP');
+            }
+        } catch (MailException $e) {
+            throw $e;
+        } finally {
+            $mailer->smtpClose();
+        }
     }
 
     /**

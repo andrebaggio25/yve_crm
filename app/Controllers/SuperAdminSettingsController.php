@@ -8,6 +8,7 @@ use App\Core\Env;
 use App\Core\Request;
 use App\Core\Response;
 use App\Services\Mail\MailConfig;
+use App\Services\Mail\SmtpProcessor;
 
 /**
  * Configurações globais do sistema - apenas superadmin
@@ -158,6 +159,38 @@ class SuperAdminSettingsController
         } catch (\Throwable $e) {
             App::logError('Erro ao salvar smtp', $e);
             $response->jsonError('Erro ao salvar', 500);
+        }
+    }
+
+    /**
+     * Conecta ao SMTP (sem enviar e-mail) usando os campos enviados; senha vazia usa a gravada ou .env.
+     */
+    public function apiValidateSmtpConfig(Request $request, Response $response): void
+    {
+        if (function_exists('set_time_limit')) {
+            @set_time_limit(60);
+        }
+        $data = $request->getJsonInput() ?? [];
+        $stored = $this->getSystemSettings();
+        if (trim((string) ($data['smtp_password'] ?? '')) === '') {
+            if (!empty($stored['smtp_password'])) {
+                $data['smtp_password'] = (string) $stored['smtp_password'];
+            } elseif ((string) Env::get('MAIL_PASSWORD', '') !== '') {
+                $data['smtp_password'] = (string) Env::get('MAIL_PASSWORD', '');
+            }
+        }
+        $base = MailConfig::getSmtp();
+        $c = MailConfig::applySmtpOverrides($data, $base);
+        if (!MailConfig::isSystemSmtpComplete($c)) {
+            $response->jsonError('Preencha host, usuario e senha (ou a ja salva / .env).', 422);
+
+            return;
+        }
+        try {
+            SmtpProcessor::validateSmtpConfig($c);
+            $response->jsonSuccess([], 'Conexao SMTP validada (conexao e autenticacao).');
+        } catch (\Throwable $e) {
+            $response->jsonError('Validacao falhou: ' . mb_substr($e->getMessage(), 0, 450), 502);
         }
     }
 

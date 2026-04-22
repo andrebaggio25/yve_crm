@@ -113,6 +113,47 @@ class MailConfig
         return self::isSystemSmtpComplete(self::getSmtpForTenant($tenantId));
     }
 
+    /**
+     * Ajusta a config resolvida (getSmtp ou getSmtpForTenant) com campos do formulario/JSON
+     * (usado para validar ou testar antes de gravar). Valores vazios nao substituem.
+     *
+     * @param array<string, mixed> $in chaves: smtp_host, smtp_port, smtp_encryption, smtp_username, smtp_password, smtp_from_*
+     * @param array{host:string,port:int,encryption:string,username:string,password:string,from_address:string,from_name:string} $base
+     * @return array{host:string,port:int,encryption:string,username:string,password:string,from_address:string,from_name:string}
+     */
+    public static function applySmtpOverrides(array $in, array $base): array
+    {
+        $c = $base;
+        $h = trim((string) ($in['smtp_host'] ?? ''));
+        if ($h !== '') {
+            $c['host'] = $h;
+        }
+        if (isset($in['smtp_port']) && (int) $in['smtp_port'] > 0) {
+            $c['port'] = (int) $in['smtp_port'];
+        }
+        $enc = trim((string) ($in['smtp_encryption'] ?? ''));
+        if (in_array($enc, ['tls', 'ssl', 'none'], true)) {
+            $c['encryption'] = $enc;
+        }
+        $u = trim((string) ($in['smtp_username'] ?? ''));
+        if ($u !== '') {
+            $c['username'] = $u;
+        }
+        if (array_key_exists('smtp_password', $in) && (string) $in['smtp_password'] !== '') {
+            $c['password'] = (string) $in['smtp_password'];
+        }
+        $fa = trim((string) ($in['smtp_from_address'] ?? ''));
+        if ($fa !== '') {
+            $c['from_address'] = $fa;
+        }
+        $fn = trim((string) ($in['smtp_from_name'] ?? ''));
+        if ($fn !== '') {
+            $c['from_name'] = $fn;
+        }
+
+        return $c;
+    }
+
     private static function strOr(mixed $v, string $fallback): string
     {
         if ($v === null) {

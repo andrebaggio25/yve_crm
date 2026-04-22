@@ -130,15 +130,19 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         msg.className = 'mt-2 text-sm text-slate-600';
-        msg.textContent = 'Enviando...';
+        msg.textContent = 'Enviando (ate ~40s)...';
         msg.classList.remove('hidden');
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 40000);
         try {
-            const r = await API.post('/api/superadmin/email-test', { to: to });
+            const r = await API.post('/api/superadmin/email-test', { to: to }, { signal: ctrl.signal });
             msg.className = 'mt-2 text-sm text-green-700';
             msg.textContent = r.message || 'Enviado';
         } catch (err) {
             msg.className = 'mt-2 text-sm text-red-700';
-            msg.textContent = err.message || 'Falha';
+            msg.textContent = (err.name === 'AbortError' ? 'Tempo esgotado. Verifique SMTP e rede.' : (err.message || 'Falha'));
+        } finally {
+            clearTimeout(t);
         }
     });
 });
