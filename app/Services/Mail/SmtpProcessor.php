@@ -95,7 +95,11 @@ class SmtpProcessor
         $mail->Username = $user;
         $mail->Password = $pass;
         $mail->SMTPAuth = $user !== '' && $pass !== '';
-        $enc = $c['encryption'] ?? 'tls';
+        $enc = strtolower((string) ($c['encryption'] ?? 'tls'));
+        // Protege contra config comum invalida (porta 465 com STARTTLS).
+        if ($mail->Port === 465 && $enc === 'tls') {
+            $enc = 'ssl';
+        }
         if ($enc === 'ssl') {
             $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
         } elseif ($enc === 'none') {
