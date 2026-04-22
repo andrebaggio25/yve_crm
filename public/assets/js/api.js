@@ -61,6 +61,11 @@ const API = {
 
             return data;
         } catch (error) {
+            // Timeout do cliente, navegacao, etc. — nao e "erro" de API; evita ruido na consola
+            const n = (error && error.cause && error.cause.name) || (error && error.name);
+            if (n === 'AbortError' || n === 'TimeoutError') {
+                throw error;
+            }
             console.error('API Error:', error);
             throw error;
         }

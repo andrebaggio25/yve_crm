@@ -1,6 +1,16 @@
 /**
  * Super Admin — status, Evolution API, SMTP
  */
+function isAbortish(err) {
+    if (!err) {
+        return false;
+    }
+    if (err.name === 'AbortError' || err.name === 'TimeoutError') {
+        return true;
+    }
+    return !!(err.cause && (err.cause.name === 'AbortError' || err.cause.name === 'TimeoutError'));
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     loadSystemStatus();
     loadEvolutionConfig();
@@ -148,7 +158,10 @@ function collectSmtpFormBody() {
 
 function postSmtpWithTimeout(url, data, method = 'post') {
     const ctrl = new AbortController();
-    const done = setTimeout(() => ctrl.abort(), 40000);
+    const done = setTimeout(
+        () => ctrl.abort(new DOMException('Timeout cliente (90s)', 'TimeoutError')),
+        90000
+    );
     const opts = { signal: ctrl.signal };
     return (method === 'put' ? API.put(url, data, opts) : API.post(url, data, opts)).finally(() => clearTimeout(done));
 }
@@ -175,7 +188,7 @@ function setupSmtpForm() {
             document.getElementById('smtp-password').value = '';
             await loadSmtpConfig();
         } catch (err) {
-            if (err.name === 'AbortError') {
+            if (isAbortish(err)) {
                 feedback.textContent = 'Tempo esgotado ao salvar. Verifique rede/servidor.';
             } else {
                 feedback.textContent = err.message || 'Erro ao salvar';
@@ -197,7 +210,7 @@ function setupSmtpForm() {
         btn.disabled = true;
         if (feedback) {
             feedback.className = 'text-sm text-slate-600';
-            feedback.textContent = 'Testando conexao SMTP (ate ~40s)...';
+            feedback.textContent = 'Testando conexao SMTP (pode levar ate ~90s)...';
             feedback.classList.remove('hidden');
         }
         try {
@@ -209,7 +222,7 @@ function setupSmtpForm() {
         } catch (err) {
             if (feedback) {
                 feedback.className = 'text-sm text-red-700';
-                if (err.name === 'AbortError') {
+                if (isAbortish(err)) {
                     feedback.textContent = 'Tempo esgotado. Verifique host, porta, firewall e MAIL_TIMEOUT (padrao 25s).';
                 } else {
                     feedback.textContent = err.message || 'Falha';

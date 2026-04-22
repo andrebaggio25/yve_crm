@@ -130,17 +130,22 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         msg.className = 'mt-2 text-sm text-slate-600';
-        msg.textContent = 'Enviando (ate ~40s)...';
+        msg.textContent = 'Enviando (pode levar ate ~90s com SMTP lento)...';
         msg.classList.remove('hidden');
         const ctrl = new AbortController();
-        const t = setTimeout(() => ctrl.abort(), 40000);
+        // Motivo claro (evita "aborted without reason" na consola) e margem acima de MAIL_TIMEOUT + envio
+        const t = setTimeout(() => ctrl.abort(new DOMException('Timeout cliente (90s)', 'TimeoutError')), 90000);
         try {
             const r = await API.post('/api/superadmin/email-test', { to: to }, { signal: ctrl.signal });
             msg.className = 'mt-2 text-sm text-green-700';
             msg.textContent = r.message || 'Enviado';
         } catch (err) {
             msg.className = 'mt-2 text-sm text-red-700';
-            msg.textContent = (err.name === 'AbortError' ? 'Tempo esgotado. Verifique SMTP e rede.' : (err.message || 'Falha'));
+            const t = err && (err.name === 'AbortError' || err.name === 'TimeoutError' ||
+                (err.cause && (err.cause.name === 'AbortError' || err.cause.name === 'TimeoutError')));
+            msg.textContent = t
+                ? 'Tempo esgotado (90s). Aumente MAIL_TIMEOUT no .env, verifique host/porta ou rede.'
+                : (err.message || 'Falha');
         } finally {
             clearTimeout(t);
         }

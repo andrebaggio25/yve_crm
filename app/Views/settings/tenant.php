@@ -361,8 +361,21 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function withAbortMs(ms) {
         const c = new AbortController();
-        const t = setTimeout(() => c.abort(), ms);
+        const t = setTimeout(
+            () => c.abort(new DOMException('Timeout cliente (' + ms + 'ms)', 'TimeoutError')),
+            ms
+        );
         return { signal: c.signal, done: () => clearTimeout(t) };
+    }
+
+    function isAbortish(err) {
+        if (!err) {
+            return false;
+        }
+        if (err.name === 'AbortError' || err.name === 'TimeoutError') {
+            return true;
+        }
+        return !!(err.cause && (err.cause.name === 'AbortError' || err.cause.name === 'TimeoutError'));
     }
 
     document.getElementById('btn-tenant-smtp-validate')?.addEventListener('click', async () => {
@@ -373,17 +386,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         if (msg) {
             msg.className = 'mt-2 text-sm text-slate-600';
-            msg.textContent = 'Testando conexao SMTP (ate ~40s)...';
+            msg.textContent = 'Testando conexao SMTP (pode levar ate ~90s)...';
             msg.classList.remove('hidden');
         }
-        const { signal, done } = withAbortMs(40000);
+        const { signal, done } = withAbortMs(90000);
         try {
             const r = await API.post('/api/settings/smtp-validate', collectTenantSmtpForApi(form), { signal: signal });
             if (msg) { msg.className = 'mt-2 text-sm text-green-700'; msg.textContent = r.message || 'Conexao validada'; }
         } catch (err) {
             if (msg) {
                 msg.className = 'mt-2 text-sm text-red-700';
-                msg.textContent = (err.name === 'AbortError' ? 'Tempo esgotado. Verifique host/porta e MAIL_TIMEOUT no servidor.' : (err.message || 'Falha'));
+                msg.textContent = isAbortish(err)
+                    ? 'Tempo esgotado. Verifique host/porta e MAIL_TIMEOUT no servidor.'
+                    : (err.message || 'Falha');
             }
         } finally { done(); }
     });
@@ -395,15 +410,17 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (msg) { msg.className = 'mt-2 text-sm text-amber-700'; msg.textContent = 'Indique o e-mail de destino.'; msg.classList.remove('hidden'); }
             return;
         }
-        if (msg) { msg.className = 'mt-2 text-sm text-slate-600'; msg.textContent = 'Enviando (ate ~40s)...'; msg.classList.remove('hidden'); }
-        const { signal, done } = withAbortMs(40000);
+        if (msg) { msg.className = 'mt-2 text-sm text-slate-600'; msg.textContent = 'Enviando (pode levar ate ~90s)...'; msg.classList.remove('hidden'); }
+        const { signal, done } = withAbortMs(90000);
         try {
             const r = await API.post('/api/settings/email-test', { to: to }, { signal: signal });
             if (msg) { msg.className = 'mt-2 text-sm text-green-700'; msg.textContent = r.message || 'Enviado'; }
         } catch (err) {
             if (msg) {
                 msg.className = 'mt-2 text-sm text-red-700';
-                msg.textContent = (err.name === 'AbortError' ? 'Tempo esgotado. Verifique SMTP ou firewall.' : (err.message || 'Falha'));
+                msg.textContent = isAbortish(err)
+                    ? 'Tempo esgotado (90s). Aumente MAIL_TIMEOUT no .env, verifique host/porta ou rede.'
+                    : (err.message || 'Falha');
             }
         } finally { done(); }
     });
