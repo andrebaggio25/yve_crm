@@ -39,6 +39,7 @@ use App\Helpers\PhoneHelper;
 use App\Services\WhatsApp\EvolutionApiService;
 use App\Services\WhatsApp\LidResolverService;
 use App\Services\Automation\AutomationEngine;
+use App\Services\Mail\SmtpProcessor;
 
 $totalProcessed = 0;
 $totalErrors = 0;
@@ -487,6 +488,17 @@ try {
     }
 } catch (\Throwable $e) {
     error_log('[Worker] automation async queue: ' . $e->getMessage());
+}
+
+/**
+ * PARTE 5: Fila de e-mail (SMTP)
+ */
+echo "Processando fila de e-mail...\n";
+try {
+    $mailRes = SmtpProcessor::runBatch(25);
+    echo "Email outbox: enviados={$mailRes['sent']} falha={$mailRes['failed']} skipped=" . ($mailRes['skipped'] ?? 0) . "\n";
+} catch (\Throwable $e) {
+    error_log('[Worker] email outbox: ' . $e->getMessage());
 }
 
 echo "=== Worker finalizado: " . date('Y-m-d H:i:s') . " ===\n";

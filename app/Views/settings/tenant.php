@@ -17,6 +17,20 @@ $workingHoursStart = $settings['working_hours_start'] ?? '09:00';
 $workingHoursEnd = $settings['working_hours_end'] ?? '18:00';
 $workingDays = $settings['working_days'] ?? [1, 2, 3, 4, 5]; // seg-sex
 
+$smtpHost = (string) ($settings['smtp_host'] ?? '');
+$smtpPort = (int) ($settings['smtp_port'] ?? 587);
+if ($smtpPort <= 0) {
+    $smtpPort = 587;
+}
+$smtpEnc = (string) ($settings['smtp_encryption'] ?? 'tls');
+if (!in_array($smtpEnc, ['tls', 'ssl', 'none'], true)) {
+    $smtpEnc = 'tls';
+}
+$smtpUser = (string) ($settings['smtp_username'] ?? '');
+$smtpFrom = (string) ($settings['smtp_from_address'] ?? '');
+$smtpFromName = (string) ($settings['smtp_from_name'] ?? '');
+$smtpPasswordSet = !empty($settings['smtp_password']);
+
 $statusColors = [
     'active' => 'bg-green-100 text-green-800',
     'trial' => 'bg-blue-100 text-blue-800',
@@ -176,6 +190,82 @@ $statusLabels = [
                 <p class="mt-2 text-xs text-slate-500">Usado para calculo de SLA e alertas de resposta</p>
             </div>
 
+            <!-- E-mail (SMTP) — opcional: usa padrao do sistema se nao preencher host/usuario completos -->
+            <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm" id="org-email-smtp">
+                <h3 class="mb-2 flex items-center gap-2 text-base font-semibold text-slate-900">
+                    <svg class="h-5 w-5 text-slate-700" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                    E-mail (SMTP) para clientes
+                </h3>
+                <p class="mb-4 text-sm text-slate-600">Deixe em branco o host ou o usuario se quiser usar o SMTP do sistema. Senha: deixe vazio para manter a atual.</p>
+                <div class="grid gap-3 sm:grid-cols-2">
+                    <div class="sm:col-span-2">
+                        <label class="mb-1 block text-sm font-medium text-slate-700">Host SMTP</label>
+                        <input type="text" name="smtp_host" class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value="<?= htmlspecialchars($smtpHost) ?>" placeholder="(padrao do sistema)">
+                    </div>
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-slate-700">Porta</label>
+                        <input type="number" name="smtp_port" min="1" max="65535" class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value="<?= (int) $smtpPort ?>">
+                    </div>
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-slate-700">Criptografia</label>
+                        <select name="smtp_encryption" class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm">
+                            <option value="tls" <?= $smtpEnc === 'tls' ? 'selected' : '' ?>>TLS</option>
+                            <option value="ssl" <?= $smtpEnc === 'ssl' ? 'selected' : '' ?>>SSL</option>
+                            <option value="none" <?= $smtpEnc === 'none' ? 'selected' : '' ?>>Nenhuma</option>
+                        </select>
+                    </div>
+                    <div class="sm:col-span-2">
+                        <label class="mb-1 block text-sm font-medium text-slate-700">Usuario</label>
+                        <input type="text" name="smtp_username" class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value="<?= htmlspecialchars($smtpUser) ?>" placeholder="(padrao do sistema)" autocomplete="off">
+                    </div>
+                    <div class="sm:col-span-2">
+                        <label class="mb-1 block text-sm font-medium text-slate-700">Senha SMTP</label>
+                        <input type="password" name="smtp_password" class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Deixe vazio para manter" autocomplete="new-password">
+                        <p class="mt-1 text-xs text-slate-500" id="smtp-pwd-hint"><?= $smtpPasswordSet ? 'Senha salva. Preencha so se quiser alterar.' : 'Nenhuma salva; pode usar a do sistema.' ?></p>
+                    </div>
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-slate-700">E-mail "De" (endereco)</label>
+                        <input type="email" name="smtp_from_address" class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value="<?= htmlspecialchars($smtpFrom) ?>" placeholder="(sistema)">
+                    </div>
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-slate-700">Nome "De"</label>
+                        <input type="text" name="smtp_from_name" class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value="<?= htmlspecialchars($smtpFromName) ?>" placeholder="(sistema)">
+                    </div>
+                </div>
+                <div class="mt-4 flex flex-col gap-2 border-t border-slate-100 pt-4 sm:flex-row sm:flex-wrap sm:items-end">
+                    <div class="min-w-0 flex-1 sm:max-w-md">
+                        <label class="text-sm font-medium text-slate-700" for="tenant-test-to">E-mail de teste</label>
+                        <input type="email" name="test_to" id="tenant-test-to" class="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="enviar@exemplo.com" autocomplete="email">
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        <button type="button" id="btn-tenant-smtp-validate" class="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-800 hover:bg-slate-50">Validar conexao</button>
+                        <button type="button" id="btn-tenant-test-email" class="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-800 hover:bg-slate-50">Enviar teste agora</button>
+                    </div>
+                </div>
+                <p id="tenant-test-msg" class="mt-2 hidden text-sm"></p>
+            </div>
+
+            <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm" id="org-email-fila">
+                <div class="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <h3 class="text-base font-semibold text-slate-900">Fila de envios (esta organizacao)</h3>
+                    <div class="flex items-center gap-2">
+                        <label class="text-sm text-slate-600" for="tenant-outbox-status">Status</label>
+                        <select id="tenant-outbox-status" class="rounded-lg border border-slate-200 px-2 py-1.5 text-sm">
+                            <option value="">Todos</option>
+                            <option value="pending">pending</option>
+                            <option value="sending">sending</option>
+                            <option value="sent">sent</option>
+                            <option value="failed">failed</option>
+                        </select>
+                        <button type="button" id="btn-tenant-outbox-refresh" class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50">Atualizar</button>
+                    </div>
+                </div>
+                <p class="mb-2 text-xs text-slate-500">Envios reais (ex.: reset de senha) dependem do worker agendar. Estados <span class="font-mono">failed</span> mostram o erro de SMTP abaixo.</p>
+                <div id="tenant-outbox" class="overflow-x-auto text-sm">
+                    <p class="text-slate-500">Carregue ou clique em Atualizar.</p>
+                </div>
+            </div>
+
             <!-- Acao -->
             <div class="flex items-center gap-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                 <button type="submit" class="rounded-lg bg-primary-600 px-6 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2">
@@ -189,6 +279,51 @@ $statusLabels = [
 </div>
 
 <script>
+function escapeHtmlTenant(s) {
+    if (!s) return '';
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+}
+
+async function loadTenantOutbox() {
+    const el = document.getElementById('tenant-outbox');
+    const st = document.getElementById('tenant-outbox-status')?.value || '';
+    if (!el) return;
+    const q = new URLSearchParams();
+    q.set('limit', '80');
+    if (st) q.set('status', st);
+    try {
+        const r = await API.get('/api/settings/email-outbox?' + q.toString());
+        const items = r.data?.items || [];
+        if (items.length === 0) {
+            el.innerHTML = '<p class="text-slate-500">Nenhum envio nesta organizacao.</p>';
+            return;
+        }
+        const sc = (x) => x === 'sent' ? 'bg-green-100 text-green-800' : (x === 'failed' ? 'bg-red-100 text-red-800' : (x === 'pending' ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-700'));
+        el.innerHTML = `<table class="min-w-full divide-y divide-slate-200 text-left text-xs sm:text-sm">
+            <thead class="bg-slate-50 text-slate-600"><tr>
+                <th class="px-2 py-2">ID</th><th class="px-2 py-2">Para</th><th class="px-2 py-2">Assunto</th><th class="px-2 py-2">St</th><th class="px-2 py-2">T</th><th class="px-2 py-2">Erro</th><th class="px-2 py-2">Criado</th>
+            </tr></thead><tbody class="divide-y divide-slate-100">
+            ${items.map(row => {
+                const le = String(row.last_error || '');
+                const err = le ? escapeHtmlTenant(le.slice(0, 120)) + (le.length > 120 ? '...' : '') : '-';
+                return `<tr class="align-top">
+                    <td class="px-2 py-2 font-mono">${row.id}</td>
+                    <td class="px-2 py-2 break-all">${escapeHtmlTenant(row.to_email)}</td>
+                    <td class="px-2 py-2 max-w-[180px] break-words">${escapeHtmlTenant((row.subject || '').slice(0, 80))}</td>
+                    <td class="px-2 py-2"><span class="rounded-full px-2 py-0.5 text-[10px] font-medium ${sc(row.status)}">${escapeHtmlTenant(row.status)}</span></td>
+                    <td class="px-2 py-2 text-center">${row.attempts}</td>
+                    <td class="px-2 py-2 text-[11px] text-red-600">${err}</td>
+                    <td class="px-2 py-2 whitespace-nowrap text-slate-500">${escapeHtmlTenant((row.created_at || '').replace('T', ' ').slice(0, 19))}</td>
+                </tr>`;
+            }).join('')}
+            </tbody></table>`;
+    } catch (e) {
+        el.innerHTML = '<p class="text-red-600">Erro ao carregar fila</p>';
+    }
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
     // Carrega estatisticas
     try {
@@ -204,6 +339,92 @@ document.addEventListener('DOMContentLoaded', async () => {
         console.error('Erro ao carregar estatisticas:', e);
     }
 
+    document.getElementById('btn-tenant-outbox-refresh')?.addEventListener('click', loadTenantOutbox);
+    document.getElementById('tenant-outbox-status')?.addEventListener('change', loadTenantOutbox);
+    loadTenantOutbox();
+
+    function collectTenantSmtpForApi(form) {
+        const b = {
+            smtp_host: (form.smtp_host?.value || '').trim(),
+            smtp_port: Math.max(1, parseInt(form.smtp_port?.value, 10) || 587),
+            smtp_encryption: form.smtp_encryption?.value || 'tls',
+            smtp_username: (form.smtp_username?.value || '').trim(),
+            smtp_from_address: (form.smtp_from_address?.value || '').trim(),
+            smtp_from_name: (form.smtp_from_name?.value || '').trim()
+        };
+        const p = (form.smtp_password?.value || '').trim();
+        if (p) {
+            b.smtp_password = p;
+        }
+        return b;
+    }
+
+    function withAbortMs(ms) {
+        const c = new AbortController();
+        const t = setTimeout(
+            () => c.abort(new DOMException('Timeout cliente (' + ms + 'ms)', 'TimeoutError')),
+            ms
+        );
+        return { signal: c.signal, done: () => clearTimeout(t) };
+    }
+
+    function isAbortish(err) {
+        if (!err) {
+            return false;
+        }
+        if (err.name === 'AbortError' || err.name === 'TimeoutError') {
+            return true;
+        }
+        return !!(err.cause && (err.cause.name === 'AbortError' || err.cause.name === 'TimeoutError'));
+    }
+
+    document.getElementById('btn-tenant-smtp-validate')?.addEventListener('click', async () => {
+        const form = document.getElementById('tenant-form');
+        const msg = document.getElementById('tenant-test-msg');
+        if (!form) {
+            return;
+        }
+        if (msg) {
+            msg.className = 'mt-2 text-sm text-slate-600';
+            msg.textContent = 'Testando conexao SMTP (pode levar ate ~90s)...';
+            msg.classList.remove('hidden');
+        }
+        const { signal, done } = withAbortMs(90000);
+        try {
+            const r = await API.post('/api/settings/smtp-validate', collectTenantSmtpForApi(form), { signal: signal });
+            if (msg) { msg.className = 'mt-2 text-sm text-green-700'; msg.textContent = r.message || 'Conexao validada'; }
+        } catch (err) {
+            if (msg) {
+                msg.className = 'mt-2 text-sm text-red-700';
+                msg.textContent = isAbortish(err)
+                    ? 'Tempo esgotado. Verifique host/porta e MAIL_TIMEOUT no servidor.'
+                    : (err.message || 'Falha');
+            }
+        } finally { done(); }
+    });
+
+    document.getElementById('btn-tenant-test-email')?.addEventListener('click', async () => {
+        const to = document.getElementById('tenant-test-to')?.value?.trim();
+        const msg = document.getElementById('tenant-test-msg');
+        if (!to) {
+            if (msg) { msg.className = 'mt-2 text-sm text-amber-700'; msg.textContent = 'Indique o e-mail de destino.'; msg.classList.remove('hidden'); }
+            return;
+        }
+        if (msg) { msg.className = 'mt-2 text-sm text-slate-600'; msg.textContent = 'Enviando (pode levar ate ~90s)...'; msg.classList.remove('hidden'); }
+        const { signal, done } = withAbortMs(90000);
+        try {
+            const r = await API.post('/api/settings/email-test', { to: to }, { signal: signal });
+            if (msg) { msg.className = 'mt-2 text-sm text-green-700'; msg.textContent = r.message || 'Enviado'; }
+        } catch (err) {
+            if (msg) {
+                msg.className = 'mt-2 text-sm text-red-700';
+                msg.textContent = isAbortish(err)
+                    ? 'Tempo esgotado (90s). Aumente MAIL_TIMEOUT no .env, verifique host/porta ou rede.'
+                    : (err.message || 'Falha');
+            }
+        } finally { done(); }
+    });
+
     // Form submit
     document.getElementById('tenant-form')?.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -215,18 +436,26 @@ document.addEventListener('DOMContentLoaded', async () => {
         feedback.className = 'hidden text-sm font-medium';
 
         const form = e.target;
-        const body = {
-            name: form.name.value,
-            settings: {
-                whatsapp_auto_create_lead: form.whatsapp_auto_create_lead?.checked ?? false,
-                whatsapp_welcome_message: form.whatsapp_welcome_message?.value ?? '',
-                auto_assign_leads: form.auto_assign_leads?.checked ?? false,
-                notify_new_lead: form.notify_new_lead?.checked ?? false,
-                notify_stage_change: form.notify_stage_change?.checked ?? false,
-                working_hours_start: form.working_hours_start?.value ?? '09:00',
-                working_hours_end: form.working_hours_end?.value ?? '18:00',
-            }
+        const st = {
+            whatsapp_auto_create_lead: form.whatsapp_auto_create_lead?.checked ?? false,
+            whatsapp_welcome_message: form.whatsapp_welcome_message?.value ?? '',
+            auto_assign_leads: form.auto_assign_leads?.checked ?? false,
+            notify_new_lead: form.notify_new_lead?.checked ?? false,
+            notify_stage_change: form.notify_stage_change?.checked ?? false,
+            working_hours_start: form.working_hours_start?.value ?? '09:00',
+            working_hours_end: form.working_hours_end?.value ?? '18:00',
+            smtp_port: Math.max(1, parseInt(form.smtp_port?.value, 10) || 587),
+            smtp_encryption: form.smtp_encryption?.value || 'tls',
+            smtp_host: (form.smtp_host?.value || '').trim(),
+            smtp_username: (form.smtp_username?.value || '').trim(),
+            smtp_from_address: (form.smtp_from_address?.value || '').trim(),
+            smtp_from_name: (form.smtp_from_name?.value || '').trim()
         };
+        const pwd = (form.smtp_password?.value || '').trim();
+        if (pwd) {
+            st.smtp_password = pwd;
+        }
+        const body = { name: form.name.value, settings: st };
 
         try {
             const res = await API.put('/api/settings/tenant', body);

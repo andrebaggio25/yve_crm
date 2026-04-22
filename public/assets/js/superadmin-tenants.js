@@ -1,6 +1,8 @@
 /**
  * Super Admin - Tenants Management
  */
+let allTenants = [];
+
 document.addEventListener('DOMContentLoaded', function() {
     const tableContainer = document.getElementById('tenants-table');
     const stopImpBtn = document.getElementById('btn-stop-imp');
@@ -11,6 +13,11 @@ document.addEventListener('DOMContentLoaded', function() {
     const form = document.getElementById('form-new-tenant');
     const totalCount = document.getElementById('total-count');
     const isImpersonating = window.SUPERADMIN_DATA?.impersonating || false;
+
+    const modalEdit = document.getElementById('modal-edit-tenant');
+    const closeEditBtn = document.getElementById('btn-close-modal-edit');
+    const cancelEditBtn = document.getElementById('btn-cancel-tenant-edit');
+    const formEdit = document.getElementById('form-edit-tenant');
 
     // Modal controls
     if (newTenantBtn && modal) {
@@ -34,6 +41,63 @@ document.addEventListener('DOMContentLoaded', function() {
         if (e.target === modal) closeModal();
     });
 
+    function openEditModal(t) {
+        if (!modalEdit || !t) return;
+        document.getElementById('edit-tenant-id').value = String(t.id);
+        document.getElementById('edit-name').value = t.name || '';
+        document.getElementById('edit-slug').value = t.slug || '';
+        document.getElementById('edit-timezone').value = t.timezone || 'Europe/Madrid';
+        document.getElementById('edit-default-locale').value = t.default_locale || 'es';
+        document.getElementById('edit-currency').value = (t.currency || 'EUR').toString().toUpperCase();
+        document.getElementById('edit-max-users').value = t.max_users != null ? t.max_users : 5;
+        document.getElementById('edit-max-leads').value = t.max_leads != null ? t.max_leads : 500;
+        modalEdit.classList.remove('hidden');
+        modalEdit.classList.add('flex');
+    }
+
+    function closeEditModal() {
+        if (modalEdit) {
+            modalEdit.classList.add('hidden');
+            modalEdit.classList.remove('flex');
+        }
+    }
+
+    closeEditBtn?.addEventListener('click', closeEditModal);
+    cancelEditBtn?.addEventListener('click', closeEditModal);
+    modalEdit?.addEventListener('click', (e) => {
+        if (e.target === modalEdit) closeEditModal();
+    });
+
+    formEdit?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const id = document.getElementById('edit-tenant-id').value;
+        const btn = formEdit.querySelector('button[type="submit"]');
+        btn.disabled = true;
+        btn.textContent = 'Salvando...';
+
+        const body = {
+            name: document.getElementById('edit-name').value.trim(),
+            slug: document.getElementById('edit-slug').value.trim().toLowerCase(),
+            timezone: document.getElementById('edit-timezone').value.trim() || 'Europe/Madrid',
+            default_locale: document.getElementById('edit-default-locale').value,
+            currency: (document.getElementById('edit-currency').value || 'EUR').toUpperCase().slice(0, 3),
+            max_users: Math.max(1, parseInt(document.getElementById('edit-max-users').value, 10) || 1),
+            max_leads: Math.max(0, parseInt(document.getElementById('edit-max-leads').value, 10) || 0)
+        };
+
+        try {
+            await API.put(`/api/superadmin/tenants/${id}`, body);
+            alert('Dados da empresa salvos.');
+            closeEditModal();
+            loadTenants();
+        } catch (err) {
+            alert(err.message || 'Erro ao salvar');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Salvar';
+        }
+    });
+
     // Form submit
     form?.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -45,7 +109,10 @@ document.addEventListener('DOMContentLoaded', function() {
             company: form.company.value,
             name: form.name.value,
             email: form.email.value,
-            password: form.password.value
+            password: form.password.value,
+            timezone: form.timezone?.value || 'Europe/Madrid',
+            default_locale: form.default_locale?.value || 'es',
+            currency: (form.currency?.value || 'EUR').toUpperCase()
         };
 
         try {
@@ -83,6 +150,7 @@ document.addEventListener('DOMContentLoaded', function() {
         try {
             const r = await API.get('/api/superadmin/tenants');
             const rows = r.data?.tenants || [];
+            allTenants = rows;
 
             if (totalCount) {
                 totalCount.textContent = rows.length;
@@ -121,7 +189,10 @@ document.addEventListener('DOMContentLoaded', function() {
                                 <td class="px-3 py-2 text-center text-slate-700">${t.users_count || 0}</td>
                                 <td class="px-3 py-2 text-center text-slate-700">${t.leads_count || 0}</td>
                                 <td class="px-3 py-2 text-center">
-                                    <div class="flex items-center justify-center gap-2">
+                                    <div class="flex flex-wrap items-center justify-center gap-1 sm:gap-2">
+                                        <button type="button" class="rounded px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100" data-edit-id="${t.id}">
+                                            Editar
+                                        </button>
                                         ${t.status !== 'active' ? `
                                             <button type="button" class="rounded px-2 py-1 text-xs font-medium text-green-600 hover:bg-green-50" data-act="${t.id}" data-s="active">
                                                 Ativar
@@ -146,6 +217,16 @@ document.addEventListener('DOMContentLoaded', function() {
             tableContainer.innerHTML = html;
 
             // Bind event listeners
+            tableContainer.querySelectorAll('[data-edit-id]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const eid = btn.getAttribute('data-edit-id');
+                    const t = allTenants.find((x) => String(x.id) === String(eid));
+                    if (t) {
+                        openEditModal(t);
+                    }
+                });
+            });
+
             tableContainer.querySelectorAll('[data-act]').forEach(btn => {
                 btn.addEventListener('click', async () => {
                     const id = btn.getAttribute('data-act');

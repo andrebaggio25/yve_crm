@@ -29,9 +29,11 @@ return function (Router $router) {
         $router->post('/login', 'AuthController@login', 'login.post');
     }, $csrfMiddleware);
 
-    $router->get('/register', 'RegisterController@show', 'register');
+    $router->get('/password/forgot', 'PasswordController@showForgot', 'password.forgot');
+    $router->get('/password/reset/{token}', 'PasswordController@showReset', 'password.reset');
     $router->group('', function ($router) {
-        $router->post('/register', 'RegisterController@register', 'register.post');
+        $router->post('/password/forgot', 'PasswordController@sendLink', 'password.forgot.post');
+        $router->post('/password/reset', 'PasswordController@reset', 'password.reset.post');
     }, $csrfMiddleware);
 
     $router->post('/webhook/evolution/{token}', 'WebhookController@evolution', 'webhook.evolution');
@@ -53,6 +55,11 @@ return function (Router $router) {
         $router->get('/', 'InboxController@index', 'inbox');
     }, $authTenant);
 
+    $router->group('profile', function ($router) {
+        $router->get('/', 'ProfileController@index', 'profile');
+        $router->post('/', 'ProfileController@update', 'profile.update');
+    }, array_merge($authMiddleware, $csrfMiddleware));
+
     // Super Admin - Configuracoes globais (sem necessidade de tenant)
     $router->group('superadmin', function ($router) {
         $router->get('/settings', 'SuperAdminSettingsController@index', 'superadmin.settings');
@@ -66,6 +73,8 @@ return function (Router $router) {
             $router->get('/', 'PipelineController@apiList', 'api.pipelines.list');
             $router->get('/{id}', 'PipelineController@apiShow', 'api.pipelines.show');
             $router->post('/', 'PipelineController@apiCreate', 'api.pipelines.create');
+            $router->post('/{id}/stages', 'PipelineController@apiCreateStage', 'api.pipelines.stages.create');
+            $router->delete('/{id}/stages/{stageId}', 'PipelineController@apiDeleteStage', 'api.pipelines.stages.delete');
             $router->put('/{id}', 'PipelineController@apiUpdate', 'api.pipelines.update');
             $router->delete('/{id}', 'PipelineController@apiDelete', 'api.pipelines.delete');
             $router->get('/{id}/kanban', 'KanbanController@apiGetKanban', 'api.kanban.data');
@@ -145,6 +154,13 @@ return function (Router $router) {
             $router->put('/', 'TenantSettingsController@apiUpdate', 'api.tenant.update');
         });
 
+        $settingsAdmin = array_merge($authTenant, $csrfMiddleware, [\App\Middleware\RoleMiddleware::class . ':admin']);
+        $router->group('settings', function ($router) {
+            $router->get('/email-outbox', 'EmailDiagnosticController@apiTenantOutbox', 'api.settings.email-outbox');
+            $router->post('/email-test', 'EmailDiagnosticController@apiTenantTest', 'api.settings.email-test');
+            $router->post('/smtp-validate', 'EmailDiagnosticController@apiTenantValidateSmtp', 'api.settings.smtp-validate');
+        }, $settingsAdmin);
+
         $router->group('automations', function ($router) {
             $router->get('/', 'AutomationController@apiList', 'api.automations.list');
             $router->post('/', 'AutomationController@apiSave', 'api.automations.save');
@@ -162,12 +178,18 @@ return function (Router $router) {
             $router->get('/system-status', 'SuperAdminSettingsController@apiSystemStatus', 'api.superadmin.system-status');
             $router->get('/evolution-config', 'SuperAdminSettingsController@apiGetEvolutionConfig', 'api.superadmin.evolution-config');
             $router->put('/evolution-config', 'SuperAdminSettingsController@apiUpdateEvolutionConfig', 'api.superadmin.evolution-config.update');
+            $router->get('/smtp-config', 'SuperAdminSettingsController@apiGetSmtpConfig', 'api.superadmin.smtp-config');
+            $router->put('/smtp-config', 'SuperAdminSettingsController@apiUpdateSmtpConfig', 'api.superadmin.smtp-config.update');
+            $router->post('/smtp-validate', 'SuperAdminSettingsController@apiValidateSmtpConfig', 'api.superadmin.smtp-validate');
+            $router->get('/email-outbox', 'EmailDiagnosticController@apiSuperAdminOutbox', 'api.superadmin.email-outbox');
+            $router->post('/email-test', 'EmailDiagnosticController@apiSuperAdminTest', 'api.superadmin.email-test');
         }, array_merge($superadminMiddleware, $csrfMiddleware));
 
         // Superadmin APIs - gerenciamento de tenants (com tenant para contexto de operacao)
         $router->group('superadmin', function ($router) {
             $router->get('/tenants', 'SuperAdminTenantController@apiList', 'api.superadmin.tenants');
             $router->post('/tenants', 'SuperAdminTenantController@apiCreate', 'api.superadmin.tenants.create');
+            $router->put('/tenants/{id}', 'SuperAdminTenantController@apiUpdate', 'api.superadmin.tenants.update');
             $router->post('/tenants/{id}/status', 'SuperAdminTenantController@apiSetStatus', 'api.superadmin.tenant.status');
             $router->post('/tenants/{id}/impersonate', 'SuperAdminTenantController@impersonate', 'api.superadmin.impersonate');
             $router->post('/stop-impersonate', 'SuperAdminTenantController@stopImpersonate', 'api.superadmin.stop');
@@ -192,6 +214,7 @@ return function (Router $router) {
     // Superadmin - Migrations e controle do sistema (acesso global, sem necessidade de tenant proprio)
     $router->group('superadmin', function ($router) {
         $router->get('/migrations', 'MigrationController@index', 'superadmin.migrations');
+        $router->get('/email', 'EmailDiagnosticController@pageSuperAdmin', 'superadmin.email');
     }, $superadminMiddleware);
 
     $superadminApiMiddleware = array_merge($superadminMiddleware, $csrfMiddleware);

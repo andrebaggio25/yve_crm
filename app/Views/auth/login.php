@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="pt-BR" class="h-full">
+<html lang="<?= htmlspecialchars(\App\Core\Lang::getLocale()) ?>" class="h-full">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login - Yve CRM</title>
+    <title><?= htmlspecialchars(__('auth.login_title')) ?> — <?= htmlspecialchars(__('app.name')) ?></title>
     <link rel="stylesheet" href="/assets/css/app.css">
 </head>
 <body class="flex min-h-full items-center justify-center bg-gradient-to-br from-primary-600 to-indigo-800 p-4">
@@ -15,8 +15,8 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>
                     </svg>
                 </div>
-                <h1 class="text-2xl font-bold text-slate-900">Yve CRM</h1>
-                <p class="mt-1 text-sm text-slate-500">Gestao de Leads</p>
+                <h1 class="text-2xl font-bold text-slate-900"><?= htmlspecialchars(__('app.name')) ?></h1>
+                <p class="mt-1 text-sm text-slate-500"><?= htmlspecialchars(__('app.subtitle')) ?></p>
             </div>
 
             <?php if ($error = App\Core\Session::flash('error')): ?>
@@ -42,13 +42,12 @@
                 <?= App\Core\Session::csrfField() ?>
 
                 <div>
-                    <label class="mb-1 block text-sm font-medium text-slate-700" for="email">Email</label>
+                    <label class="mb-1 block text-sm font-medium text-slate-700" for="email"><?= htmlspecialchars(__('auth.email')) ?></label>
                     <input
                         type="email"
                         id="email"
                         name="email"
                         class="w-full rounded-lg border border-slate-200 px-4 py-3 text-slate-900 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20"
-                        placeholder="seu@email.com"
                         value="<?= htmlspecialchars(App\Core\Session::getOld('email', '')) ?>"
                         required
                         autofocus
@@ -56,26 +55,25 @@
                 </div>
 
                 <div>
-                    <label class="mb-1 block text-sm font-medium text-slate-700" for="password">Senha</label>
+                    <label class="mb-1 block text-sm font-medium text-slate-700" for="password"><?= htmlspecialchars(__('auth.password')) ?></label>
                     <input
                         type="password"
                         id="password"
                         name="password"
                         class="w-full rounded-lg border border-slate-200 px-4 py-3 text-slate-900 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20"
-                        placeholder="Sua senha"
                         required
                     >
                 </div>
 
                 <button type="submit" class="w-full rounded-lg bg-primary-600 py-3 text-sm font-semibold text-white transition hover:bg-primary-700">
-                    Entrar
+                    <?= htmlspecialchars(__('auth.sign_in')) ?>
                 </button>
             </form>
 
             <p class="mt-6 text-center text-sm text-slate-600">
-                <a href="/register" class="font-medium text-primary-600 hover:underline">Criar nova conta</a>
+                <a href="/password/forgot" class="font-medium text-primary-600 hover:underline"><?= htmlspecialchars(__('auth.forgot')) ?></a>
             </p>
-            <p class="mt-4 text-center text-xs text-slate-400">Versao 1.0.0</p>
+            <p class="mt-4 text-center text-xs text-slate-400"><?= htmlspecialchars(__('app.version')) ?></p>
         </div>
     </div>
 </body>

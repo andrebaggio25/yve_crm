@@ -44,9 +44,24 @@ class SuperAdminTenantController
             $response->jsonError('Email invalido', 422);
             return;
         }
-        if (strlen($password) < 6) {
-            $response->jsonError('Senha muito curta (min 6 caracteres)', 422);
+        if (strlen($password) < 8) {
+            $response->jsonError('Senha muito curta (min 8 caracteres)', 422);
             return;
+        }
+
+        $timezone = trim((string) ($data['timezone'] ?? 'Europe/Madrid'));
+        try {
+            new \DateTimeZone($timezone === '' ? 'Europe/Madrid' : $timezone);
+        } catch (\Throwable $e) {
+            $timezone = 'Europe/Madrid';
+        }
+        $defaultLocale = (string) ($data['default_locale'] ?? 'es');
+        if (!in_array($defaultLocale, ['en', 'es', 'pt'], true)) {
+            $defaultLocale = 'es';
+        }
+        $currency = strtoupper((string) ($data['currency'] ?? 'EUR'));
+        if (!preg_match('/^[A-Z]{3}$/', $currency)) {
+            $currency = 'EUR';
         }
 
         // Verifica se email ja existe
@@ -72,6 +87,9 @@ class SuperAdminTenantController
                 'status' => 'trial',
                 'max_users' => 5,
                 'max_leads' => 500,
+                'timezone' => $timezone,
+                'default_locale' => $defaultLocale,
+                'currency' => $currency,
             ]);
 
             // Cria usuario admin
@@ -82,6 +100,7 @@ class SuperAdminTenantController
                 'password_hash' => password_hash($password, PASSWORD_BCRYPT),
                 'role' => 'admin',
                 'status' => 'active',
+                'locale' => $defaultLocale,
             ]);
 
             // Atualiza owner do tenant
@@ -137,11 +156,109 @@ class SuperAdminTenantController
                     (SELECT COUNT(*) FROM users u WHERE u.tenant_id = t.id AND u.deleted_at IS NULL) AS users_count,
                     (SELECT COUNT(*) FROM leads l WHERE l.tenant_id = t.id AND l.deleted_at IS NULL) AS leads_count
                  FROM tenants t
+                 WHERE t.id > 0
                  ORDER BY t.id DESC"
             );
             $response->jsonSuccess(['tenants' => $rows]);
         } catch (\Throwable $e) {
             $response->jsonError('Erro ao listar', 500);
+        }
+    }
+
+    public function apiUpdate(Request $request, Response $response): void
+    {
+        $id = (int) ($request->getParam('id') ?? 0);
+        if ($id <= 0) {
+            $response->jsonError('Tenant invalido', 422);
+
+            return;
+        }
+
+        $row = Database::fetch('SELECT id, slug FROM tenants WHERE id = :id LIMIT 1', [':id' => $id]);
+        if (!$row) {
+            $response->jsonError('Tenant nao encontrado', 404);
+
+            return;
+        }
+
+        $data = $request->getJsonInput() ?? [];
+        $name = trim((string) ($data['name'] ?? ''));
+        if (strlen($name) < 2) {
+            $response->jsonError('Nome da empresa invalido (min 2 caracteres)', 422);
+
+            return;
+        }
+
+        $slug = trim((string) ($data['slug'] ?? ''));
+        if (strlen($slug) < 2) {
+            $response->jsonError('Slug invalido (min 2 caracteres)', 422);
+
+            return;
+        }
+        if (!preg_match('/^[a-z0-9]+(-[a-z0-9]+)*$/', $slug)) {
+            $response->jsonError('Use apenas letras minusculas, numeros e hifens no slug', 422);
+
+            return;
+        }
+        $other = Database::fetch('SELECT id FROM tenants WHERE slug = :s AND id != :id LIMIT 1', [':s' => $slug, ':id' => $id]);
+        if ($other) {
+            $response->jsonError('Este slug ja esta em uso', 422);
+
+            return;
+        }
+
+        $timezone = trim((string) ($data['timezone'] ?? 'Europe/Madrid'));
+        try {
+            new \DateTimeZone($timezone === '' ? 'Europe/Madrid' : $timezone);
+        } catch (\Throwable $e) {
+            $response->jsonError('Timezone IANA invalido', 422);
+
+            return;
+        }
+        if ($timezone === '') {
+            $timezone = 'Europe/Madrid';
+        }
+
+        $defaultLocale = (string) ($data['default_locale'] ?? 'es');
+        if (!in_array($defaultLocale, ['en', 'es', 'pt'], true)) {
+            $defaultLocale = 'es';
+        }
+
+        $currency = strtoupper((string) ($data['currency'] ?? 'EUR'));
+        if (!preg_match('/^[A-Z]{3}$/', $currency)) {
+            $response->jsonError('Moeda invalida (ISO 4217, ex. EUR)', 422);
+
+            return;
+        }
+
+        $maxUsers = (int) ($data['max_users'] ?? 0);
+        $maxLeads = (int) ($data['max_leads'] ?? 0);
+        if ($maxUsers < 1) {
+            $maxUsers = 1;
+        }
+        if ($maxLeads < 0) {
+            $maxLeads = 0;
+        }
+
+        try {
+            Database::update(
+                'tenants',
+                [
+                    'name' => $name,
+                    'slug' => $slug,
+                    'timezone' => $timezone,
+                    'default_locale' => $defaultLocale,
+                    'currency' => $currency,
+                    'max_users' => $maxUsers,
+                    'max_leads' => $maxLeads,
+                ],
+                'id = :id',
+                [':id' => $id]
+            );
+            $response->jsonSuccess([], 'Tenant atualizado');
+        } catch (\Throwable $e) {
+            App::logError('apiUpdate tenant', $e);
+            $response->jsonError('Erro ao atualizar', 500);
         }
     }
 

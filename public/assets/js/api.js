@@ -61,17 +61,22 @@ const API = {
 
             return data;
         } catch (error) {
+            // Timeout do cliente, navegacao, etc. — nao e "erro" de API; evita ruido na consola
+            const n = (error && error.cause && error.cause.name) || (error && error.name);
+            if (n === 'AbortError' || n === 'TimeoutError') {
+                throw error;
+            }
             console.error('API Error:', error);
             throw error;
         }
     },
 
-    get(url) {
-        return this.request(url, { method: 'GET' });
+    get(url, requestOptions = {}) {
+        return this.request(url, { method: 'GET', ...requestOptions });
     },
 
-    post(url, data = {}) {
-        return this.request(url, { method: 'POST', body: data });
+    post(url, data = {}, requestOptions = {}) {
+        return this.request(url, { method: 'POST', body: data, ...requestOptions });
     },
 
     /**
@@ -98,12 +103,17 @@ const API = {
         return data;
     },
 
-    put(url, data = {}) {
-        return this.request(url, { method: 'PUT', body: data });
+    put(url, data = {}, requestOptions = {}) {
+        return this.request(url, { method: 'PUT', body: data, ...requestOptions });
     },
 
     delete(url) {
         return this.request(url, { method: 'DELETE' });
+    },
+
+    /** DELETE com corpo JSON (ex.: migrar leads ao excluir etapa). */
+    deleteWithBody(url, data = {}) {
+        return this.request(url, { method: 'DELETE', body: data });
     },
 
     // Leads

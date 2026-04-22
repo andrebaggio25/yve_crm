@@ -14,7 +14,8 @@ return [
     'debug' => Env::bool('APP_DEBUG', true),
     'url' => Env::get('APP_URL', 'http://localhost/yve_crm'),
     'timezone' => Env::get('APP_TIMEZONE', 'Europe/Madrid'),
-    'locale' => Env::get('APP_LOCALE', 'pt_BR'),
+    /** Idioma por defecto de la app (es|en|pt). */
+    'locale' => Env::get('APP_LOCALE', 'es'),
     'session_lifetime' => (int) Env::get('SESSION_LIFETIME_MINUTES', '120'),
     'csrf_token_name' => Env::get('CSRF_TOKEN_NAME', 'csrf_token'),
     'upload_max_size' => (int) Env::get('UPLOAD_MAX_BYTES', (string) (10 * 1024 * 1024)),
