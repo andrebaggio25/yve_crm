@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="<?= htmlspecialchars(\App\Core\Lang::getLocale()) ?>" class="h-full">
+<html lang="<?= htmlspecialchars(\App\Core\Lang::getLocale()) ?>" class="h-dvh min-h-0">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,27 +7,33 @@
     <?= App\Core\Session::csrfMeta() ?>
     <link rel="stylesheet" href="/assets/css/app.css?v=<?= filemtime(__DIR__ . '/../../../public/assets/css/app.css') ?>">
 </head>
-<body class="min-h-full bg-slate-50 text-slate-900">
-    <div class="flex min-h-screen">
+<body class="h-dvh min-h-0 overflow-hidden bg-slate-50 text-slate-900">
+    <div class="flex h-dvh min-h-0 w-full min-w-0">
         <?php include __DIR__ . '/../partials/sidebar.php'; ?>
 
-        <div class="flex min-w-0 flex-1 flex-col pb-16 md:pb-0">
+        <div class="flex min-h-0 w-full min-w-0 max-w-full flex-1 flex-col overflow-hidden pb-16 md:pb-0">
             <?php include __DIR__ . '/../partials/header.php'; ?>
 
             <?php
             /**
-             * Conteudo da area logada. `min-w-0` + `max-w-full`: em flex, o filho predefinido tem
-             * min-width:auto e pode crescer com o conteudo; isso impede scroll interno (ex.: kanban horizontal).
-             * Com min-w-0 o bloco respeita a largura disponivel e filhos com overflow-x-auto funcionam.
+             * `min-w-0` + `max-w-full`: em flex, evita o min-width:auto a impedir scroll interno
+             * (ex.: kanban em X). `flex flex-1 min-h-0` + `overflow-y-auto`: o conteudo rola
+             * **dentro** do main, sem esticar o documento; o cabecalho e a shell ficam na altura da viewport.
              */
             ?>
-            <main class="min-w-0 max-w-full flex-1 px-4 py-4 sm:px-6 lg:px-8">
+            <?php
+            $isKanbanFullWidth = !empty($contentFullBleed ?? false);
+            $mainPad = $isKanbanFullWidth
+                ? 'px-[5px] py-1 sm:py-2'
+                : 'px-4 py-4 sm:px-6 lg:px-8';
+            ?>
+            <main class="min-w-0 max-w-full flex-1 min-h-0 flex flex-col overflow-y-auto overflow-x-hidden <?= $mainPad ?>">
                 <?= $content ?>
             </main>
         </div>
-
-        <?php include __DIR__ . '/../partials/bottom-nav.php'; ?>
     </div>
+
+    <?php include __DIR__ . '/../partials/bottom-nav.php'; ?>
 
     <div class="toast-container" id="toast-container"></div>
     <div id="confirm-modal-root"></div>

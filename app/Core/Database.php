@@ -22,7 +22,11 @@ class Database
             $options = $config['options'] ?? [];
             // Garante que a sessao MySQL use a mesma collation das tabelas, evitando
             // `Illegal mix of collations` em LIKE/JOINs com parametros vindos do PHP.
-            $options[\PDO::MYSQL_ATTR_INIT_COMMAND] = "SET NAMES {$charset} COLLATE {$collation}";
+            // PHP 8.5+: usar Pdo\Mysql (PDO::MYSQL_ATTR_* em PDO fica deprecated).
+            $initCmdAttr = class_exists(\Pdo\Mysql::class, false)
+                ? \Pdo\Mysql::ATTR_INIT_COMMAND
+                : \PDO::MYSQL_ATTR_INIT_COMMAND;
+            $options[$initCmdAttr] = "SET NAMES {$charset} COLLATE {$collation}";
 
             try {
                 self::$instance = new PDO(

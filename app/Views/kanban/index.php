@@ -2,13 +2,14 @@
 $title = 'Kanban';
 $pageTitle = 'Leads / Kanban';
 /**
- * Kanban: colunas com largura fixa (JS) + linha flex sem quebra. A rolagem horizontal fica no
- * elemento #kanban-board (overflow-x-auto); a pagina inteira nao deve expandir em largura.
- * Manter `w-full min-w-0` na page e no board alinhado a public/assets/js/kanban.js (renderBoard).
+ * Kanban: o layout principal (main) tem altura limitada pela viewport; esta area preenche o
+ * espaco restante (flex-1 min-h-0) sem crescer com as listas. Cada coluna rola em Y; o board
+ * rola em X. Manter classes alinhadas a public/assets/js/kanban.js (renderBoard, createColumn).
  */
 ?>
-<div class="kanban-page -mx-4 flex min-h-[calc(100vh-7rem)] w-full min-w-0 flex-col sm:-mx-6 lg:-mx-8" data-pipeline-id="<?= (int) ($pipelineId ?? 1) ?>">
-    <div class="flex flex-shrink-0 flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-4 py-3 sm:px-6">
+<div class="flex w-full min-w-0 min-h-0 flex-1 flex-col overflow-hidden" id="kanban-layout-root">
+<div class="kanban-page flex min-h-0 w-full min-w-0 flex-1 flex-col" data-pipeline-id="<?= (int) ($pipelineId ?? 1) ?>">
+    <div class="flex flex-shrink-0 flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-0 py-2.5">
         <input type="search" class="min-w-[200px] flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20 sm:max-w-xs" id="search-leads" placeholder="Buscar leads...">
         <select class="min-w-[180px] rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20" id="filter-user">
             <option value="">Todos os responsaveis</option>
@@ -22,12 +23,13 @@ $pageTitle = 'Leads / Kanban';
         </button>
     </div>
 
-    <div class="kanban-board flex min-h-0 w-full min-w-0 flex-1 flex-nowrap gap-4 overflow-x-auto overflow-y-hidden overscroll-x-contain [scrollbar-gutter:stable] touch-pan-x bg-slate-50 px-4 py-4 sm:px-6" id="kanban-board" aria-label="Colunas do funil">
+    <div class="kanban-board flex h-full min-h-0 w-full min-w-0 flex-1 flex-nowrap gap-3 overflow-x-auto overflow-y-hidden overscroll-x-contain [scrollbar-gutter:stable] touch-pan-x bg-slate-50 px-0 py-2 sm:gap-3 sm:py-2.5" id="kanban-board" aria-label="Colunas do funil">
         <div class="flex flex-1 flex-col items-center justify-center gap-2 text-slate-500">
             <div class="spinner h-10 w-10 rounded-full border-2 border-slate-200 border-t-primary-600"></div>
             <p class="text-sm">Carregando leads...</p>
         </div>
     </div>
+</div>
 </div>
 
 <div class="fixed inset-0 z-[400] hidden items-center justify-center bg-black/50 p-4" id="lead-create-modal" aria-hidden="true">

@@ -4,7 +4,7 @@ $currentPath = App\Core\App::getRequest()->getPath();
 $hasPendingMigrations = App\Core\Migration::hasPending();
 $isActive = fn(string $needle) => strpos($currentPath, $needle) !== false;
 ?>
-<aside id="app-sidebar" class="sidebar fixed inset-y-0 left-0 z-[200] flex w-64 -translate-x-full flex-col border-r border-slate-200 bg-white transition-transform duration-200 md:relative md:translate-x-0">
+<aside id="app-sidebar" class="sidebar fixed inset-y-0 left-0 z-[200] flex h-dvh max-h-dvh w-64 min-h-0 -translate-x-full flex-col border-r border-slate-200 bg-white transition-transform duration-200 md:relative md:translate-x-0">
     <div class="flex h-14 shrink-0 items-center border-b border-slate-100 px-4">
         <div class="flex items-center gap-2">
             <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-primary-500 to-indigo-600 text-white">

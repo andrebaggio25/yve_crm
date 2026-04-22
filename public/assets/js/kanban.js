@@ -1,9 +1,9 @@
 /**
  * Yve CRM - Kanban JavaScript
  *
- * Tabuleiro: colunas `shrink-0` com largura fixa; o contentor #kanban-board usa flex-nowrap +
- * overflow-x-auto (ver renderBoard). Qualquer alteracao nas classes do board deve espelhar-se em
- * app/Views/kanban/index.php para o estado inicial antes do primeiro render.
+ * Tabuleiro: altura limitada ao main (flex-1 min-h-0) — a lista de cards rola *dentro* de cada
+ * coluna; o board rola em X. Colunas: shrink-0 + largura fixa + h-full. Manter alinhado a
+ * app/Views/kanban/index.php (#kanban-board) no estado inicial.
  */
 
 const Kanban = {
@@ -543,7 +543,7 @@ const Kanban = {
 
         board.innerHTML = '';
         board.className =
-            'kanban-board flex min-h-0 w-full min-w-0 flex-1 flex-nowrap gap-4 overflow-x-auto overflow-y-hidden overscroll-x-contain [scrollbar-gutter:stable] touch-pan-x bg-slate-50 px-4 py-4 sm:px-6';
+            'kanban-board flex h-full min-h-0 w-full min-w-0 flex-1 flex-nowrap gap-3 overflow-x-auto overflow-y-hidden overscroll-x-contain [scrollbar-gutter:stable] touch-pan-x bg-slate-50 px-0 py-2 sm:gap-3 sm:py-2.5';
 
         const search = document.getElementById('search-leads')?.value || '';
         const userId = document.getElementById('filter-user')?.value || '';
@@ -584,7 +584,7 @@ const Kanban = {
         const column = document.createElement('div');
         const isEntry = !!meta.isEntryColumn;
         column.className =
-            'kanban-column flex w-[300px] shrink-0 flex-col rounded-xl bg-slate-100 max-h-full transition-[box-shadow] duration-150 sm:w-[320px]' +
+            'kanban-column flex h-full min-h-0 w-[300px] shrink-0 flex-col rounded-xl bg-slate-100 max-h-full transition-[box-shadow] duration-150 sm:w-[320px]' +
             (isEntry ? ' ring-2 ring-amber-400/80 ring-offset-2 ring-offset-slate-50' : '');
         column.setAttribute('data-kanban-column', '1');
         column.setAttribute('data-stage-id', String(stage.id));
@@ -605,8 +605,8 @@ const Kanban = {
                 </div>
                 <span class="shrink-0 rounded-full bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-600" title="Leads nesta etapa">${badge}</span>
             </div>
-            <div class="border-b border-slate-200/80 px-3 py-2 text-xs text-slate-500">Soma (visivel): ${this.formatCurrency(totalValue)}</div>
-            <div class="kanban-column-scroll flex-1 min-h-[120px] space-y-2 overflow-y-auto overflow-x-hidden p-3">${cardsHtml || '<p class="text-center text-xs text-slate-400">Vazio</p>'}</div>
+            <div class="shrink-0 border-b border-slate-200/80 px-3 py-2 text-xs text-slate-500">Soma (visivel): ${this.formatCurrency(totalValue)}</div>
+            <div class="kanban-column-scroll min-h-0 flex-1 space-y-2 overflow-y-auto overflow-x-hidden p-3">${cardsHtml || '<p class="text-center text-xs text-slate-400">Vazio</p>'}</div>
         `;
 
         this.bindColumnDragAndDrop(column);
