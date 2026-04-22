@@ -25,6 +25,7 @@ class KanbanController
             'title' => 'Kanban',
             'pageTitle' => 'Leads / Kanban',
             'pipelineId' => $pipelineId,
+            'contentFullBleed' => true,
         ]);
     }
 
@@ -51,6 +52,7 @@ class KanbanController
             'title' => 'Kanban',
             'pageTitle' => 'Leads / Kanban',
             'pipelineId' => (int) $pipelineId,
+            'contentFullBleed' => true,
         ]);
     }
 
