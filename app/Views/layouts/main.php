@@ -14,6 +14,13 @@
         <div class="flex min-w-0 flex-1 flex-col pb-16 md:pb-0">
             <?php include __DIR__ . '/../partials/header.php'; ?>
 
+            <?php
+            /**
+             * Conteudo da area logada. `min-w-0` + `max-w-full`: em flex, o filho predefinido tem
+             * min-width:auto e pode crescer com o conteudo; isso impede scroll interno (ex.: kanban horizontal).
+             * Com min-w-0 o bloco respeita a largura disponivel e filhos com overflow-x-auto funcionam.
+             */
+            ?>
             <main class="min-w-0 max-w-full flex-1 px-4 py-4 sm:px-6 lg:px-8">
                 <?= $content ?>
             </main>

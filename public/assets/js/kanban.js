@@ -1,5 +1,9 @@
 /**
  * Yve CRM - Kanban JavaScript
+ *
+ * Tabuleiro: colunas `shrink-0` com largura fixa; o contentor #kanban-board usa flex-nowrap +
+ * overflow-x-auto (ver renderBoard). Qualquer alteracao nas classes do board deve espelhar-se em
+ * app/Views/kanban/index.php para o estado inicial antes do primeiro render.
  */
 
 const Kanban = {

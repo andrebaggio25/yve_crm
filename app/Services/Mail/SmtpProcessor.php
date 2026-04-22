@@ -82,6 +82,9 @@ class SmtpProcessor
     }
 
     /**
+     * Monta PHPMailer para SMTP. Timeout: MAIL_TIMEOUT (segundos) e default_socket_timeout.
+     * Porta 465 costuma ser SMTPS (ssl); se a config vier como tls, forçamos ssl para evitar travar/timeout.
+     *
      * @param array{host:string,port:int,encryption:string,username:string,password:string,from_address:string,from_name:string} $c
      */
     public static function buildMailerFromConfig(array $c): PHPMailer
